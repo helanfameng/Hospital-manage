@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.hospital.inpatient.mapper.AuthMapper">
+    <select id="findUserByUsername" resultType="map">
+        SELECT ua.id, ua.username, ua.password_hash, ua.display_name, ua.enabled, ua.token_version,
+               ua.staff_id, s.department_id, s.active staff_active
+        FROM user_account ua LEFT JOIN staff s ON s.id=ua.staff_id
+        WHERE ua.username = #{username}
+    </select>
+    <select id="findRolesByUserId" resultType="string">
+        SELECT r.code FROM role r
+        JOIN user_role ur ON ur.role_id = r.id
+        WHERE ur.user_id = #{userId} AND r.active = TRUE
+        ORDER BY r.code
+    </select>
+    <select id="findPermissionsByUserId" resultType="string">
+        SELECT DISTINCT p.code FROM permission p
+        JOIN role_permission rp ON rp.permission_id = p.id
+        JOIN user_role ur ON ur.role_id = rp.role_id
+        JOIN role r ON r.id=ur.role_id
+        WHERE ur.user_id = #{userId} AND r.active=TRUE
+        ORDER BY p.code
+    </select>
+    <update id="updateLastLogin">
+        UPDATE user_account SET last_login_at = UTC_TIMESTAMP(3) WHERE id = #{userId}
+    </update>
+    <select id="countUsers" resultType="int">
+        SELECT COUNT(*) FROM user_account
+    </select>
+    <insert id="insertBootstrapUser" parameterType="map" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO user_account(staff_id, username, password_hash, display_name, enabled)
+        SELECT s.id, #{username}, #{passwordHash}, #{displayName}, TRUE
+        FROM staff s WHERE s.staff_no = #{staffNo}
+    </insert>
+    <insert id="assignRole">
+        INSERT INTO user_role(user_id, role_id)
+        SELECT #{userId}, id FROM role WHERE code = #{roleCode}
+    </insert>
+</mapper>

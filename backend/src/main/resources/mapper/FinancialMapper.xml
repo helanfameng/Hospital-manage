@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.hospital.inpatient.mapper.FinancialMapper">
+    <select id="deposits" resultType="map">
+        SELECT dt.*, ua.display_name operator_name,
+               EXISTS(SELECT 1 FROM deposit_transaction rev WHERE rev.original_transaction_id=dt.id) is_reversed
+        FROM deposit_transaction dt LEFT JOIN user_account ua ON ua.id=dt.operated_by
+        WHERE dt.admission_id=#{admissionId} ORDER BY dt.transaction_time DESC
+    </select>
+    <insert id="insertDeposit" parameterType="map" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO deposit_transaction(admission_id, transaction_no, request_no, transaction_type, amount,
+                                        payment_method, note, operated_by)
+        VALUES(#{admissionId}, #{transactionNo}, #{requestNo}, #{type}, #{amount}, #{paymentMethod}, #{note}, #{operatorId})
+    </insert>
+    <select id="lockDeposit" resultType="map">
+        SELECT * FROM deposit_transaction WHERE id=#{id} FOR UPDATE
+    </select>
+    <insert id="insertDepositReversal" parameterType="map" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO deposit_transaction(admission_id, transaction_no, transaction_type, amount,
+                                        original_transaction_id, payment_method, note, operated_by)
+        VALUES(#{admissionId}, #{transactionNo}, 'REVERSAL', #{amount}, #{originalId},
+               #{paymentMethod}, #{reason}, #{operatorId})
+    </insert>
+    <select id="charges" resultType="map">
+        SELECT c.*, mi.item_code, COALESCE(oi.item_name_snapshot,mi.name) item_name,
+               COALESCE(oi.item_type_snapshot,mi.item_type) item_type,
+               COALESCE(er.unit_snapshot,oi.unit_snapshot,mi.unit) unit,
+               mo.id order_id, mo.order_no
+        FROM charge_detail c JOIN medical_item mi ON mi.id=c.medical_item_id
+        LEFT JOIN execution_record er ON er.id=c.execution_id
+        LEFT JOIN order_item oi ON oi.id=er.order_item_id
+        LEFT JOIN medical_order mo ON mo.id=oi.medical_order_id AND mo.admission_id=c.admission_id
+        WHERE c.admission_id=#{admissionId} ORDER BY c.charged_at DESC,c.id DESC
+    </select>
+    <select id="settlementPrecheck" resultType="map">
+        SELECT a.id admission_id, a.status, db.deposit_balance, db.total_charge, db.available_balance,
+               (SELECT COUNT(*) FROM medical_order mo
+                 WHERE mo.admission_id=a.id AND mo.status IN ('DRAFT','SUBMITTED','IN_PROGRESS')) pending_order_count,
+               GREATEST(db.total_charge-db.deposit_balance,0) amount_due,
+               GREATEST(db.deposit_balance-db.total_charge,0) refund_amount
+        FROM admission a JOIN v_admission_deposit_balance db ON db.admission_id=a.id
+        WHERE a.id=#{admissionId}
+    </select>
+    <select id="callSettlement" statementType="CALLABLE" parameterType="map">
+        {CALL sp_discharge_settlement(
+            #{admissionId, mode=IN, jdbcType=BIGINT},
+            #{operatorId, mode=IN, jdbcType=BIGINT},
+            #{settlementId, mode=OUT, jdbcType=BIGINT}
+        )}
+    </select>
+    <select id="findSettlement" resultType="map">
+        SELECT s.*, a.admission_no, p.name patient_name, ua.display_name settled_by_name
+        FROM settlement s JOIN admission a ON a.id=s.admission_id JOIN patient p ON p.id=a.patient_id
+        LEFT JOIN user_account ua ON ua.id=s.settled_by
+        WHERE s.admission_id=#{admissionId}
+    </select>
+    <select id="settlementDetails" resultType="map">
+        SELECT * FROM settlement_detail WHERE settlement_id=#{settlementId} ORDER BY category
+    </select>
+    <select id="alerts" resultType="map">
+        SELECT aa.*, a.admission_no, p.patient_no, p.name patient_name, d.name department_name
+        FROM account_alert aa JOIN admission a ON a.id=aa.admission_id
+        JOIN patient p ON p.id=a.patient_id JOIN department d ON d.id=a.department_id
+        <where>
+            <if test="status != null and status != ''">aa.status=#{status}</if>
+            <if test="level != null and level != ''">AND aa.level=#{level}</if>
+        </where>
+        ORDER BY FIELD(aa.level,'CRITICAL','WARNING','INFO'), aa.created_at DESC
+        LIMIT #{size} OFFSET #{offset}
+    </select>
+    <select id="countAlerts" resultType="long">
+        SELECT COUNT(*) FROM account_alert aa
+        <where>
+            <if test="status != null and status != ''">aa.status=#{status}</if>
+            <if test="level != null and level != ''">AND aa.level=#{level}</if>
+        </where>
+    </select>
+    <update id="resolveAlert">
+        UPDATE account_alert SET status='RESOLVED', resolved_by=#{userId}, resolved_at=UTC_TIMESTAMP(3)
+        WHERE id=#{id} AND status='OPEN'
+    </update>
+</mapper>

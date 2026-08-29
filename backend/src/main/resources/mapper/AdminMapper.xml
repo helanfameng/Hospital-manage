@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.hospital.inpatient.mapper.AdminMapper">
+    <select id="users" resultType="map">
+        SELECT ua.id,ua.username,ua.display_name,ua.enabled,ua.last_login_at,s.staff_no,s.staff_type,
+               GROUP_CONCAT(r.code ORDER BY r.code) role_codes
+        FROM user_account ua LEFT JOIN staff s ON s.id=ua.staff_id
+        LEFT JOIN user_role ur ON ur.user_id=ua.id LEFT JOIN role r ON r.id=ur.role_id
+        GROUP BY ua.id,ua.username,ua.display_name,ua.enabled,ua.last_login_at,s.staff_no,s.staff_type
+        ORDER BY ua.id
+    </select>
+    <select id="roles" resultType="map">
+        SELECT r.id,r.code,r.name,r.active,GROUP_CONCAT(p.code ORDER BY p.code) permissions
+        FROM role r LEFT JOIN role_permission rp ON rp.role_id=r.id LEFT JOIN permission p ON p.id=rp.permission_id
+        GROUP BY r.id,r.code,r.name,r.active ORDER BY r.id
+    </select>
+    <select id="permissions" resultType="map">
+        SELECT id,code,name FROM permission ORDER BY code
+    </select>
+    <insert id="insertUser" parameterType="map" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO user_account(staff_id,username,password_hash,display_name,enabled)
+        VALUES(#{staffId},#{username},#{passwordHash},#{displayName},TRUE)
+    </insert>
+    <insert id="assignUserRole">
+        INSERT INTO user_role(user_id,role_id) SELECT #{userId},id FROM role WHERE code=#{roleCode}
+    </insert>
+    <update id="setUserEnabled">
+        UPDATE user_account SET enabled=#{enabled} WHERE id=#{userId}
+    </update>
+</mapper>
+

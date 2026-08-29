@@ -1,0 +1,16 @@
+CREATE INDEX idx_admission_patient_status ON admission(patient_id, status);
+CREATE INDEX idx_admission_department_time ON admission(department_id, admission_time);
+CREATE INDEX idx_bed_room_status ON bed(room_id, status);
+CREATE INDEX idx_bed_usage_admission_time ON bed_usage(admission_id, start_time);
+CREATE INDEX idx_transfer_admission_time ON transfer_record(admission_id, transferred_at);
+CREATE INDEX idx_order_admission_status ON medical_order(admission_id, status);
+CREATE INDEX idx_order_prescriber_time ON medical_order(prescribed_by, created_at);
+CREATE INDEX idx_order_item_order ON order_item(medical_order_id);
+CREATE INDEX idx_execution_item_time ON execution_record(order_item_id, execution_time);
+CREATE INDEX idx_execution_phase ON execution_record(order_item_id, phase, status);
+CREATE INDEX idx_inventory_item_time ON drug_inventory_transaction(medical_item_id, created_at);
+CREATE INDEX idx_deposit_admission_time ON deposit_transaction(admission_id, transaction_time);
+CREATE INDEX idx_charge_admission_time ON charge_detail(admission_id, charged_at);
+CREATE INDEX idx_charge_department_time ON charge_detail(department_id, charged_at);
+CREATE INDEX idx_alert_status_level ON account_alert(status, level, created_at);
+CREATE INDEX idx_audit_user_time ON audit_log(user_id, created_at);

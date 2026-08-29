@@ -1,0 +1,380 @@
+%% 小型医院住院信息管理与费用结算系统
+%% 依据当前 V1 / database/schema.sql 生成，共 30 张应用表
+%% 基数按照外键是否可空、是否唯一确定；未把业务规则误画成数据库外键
+erDiagram
+    direction LR
+
+    department {
+        bigint id PK
+        varchar code UK
+        varchar name
+        varchar description
+        boolean active
+    }
+
+    ward {
+        bigint id PK
+        bigint department_id FK
+        varchar code UK
+        varchar name
+        boolean active
+    }
+
+    room {
+        bigint id PK
+        bigint ward_id FK
+        varchar room_no
+        varchar room_type
+        boolean active
+    }
+
+    bed {
+        bigint id PK
+        bigint room_id FK
+        varchar bed_no
+        varchar status
+        int version
+        boolean active
+    }
+
+    staff {
+        bigint id PK
+        varchar staff_no UK
+        varchar name
+        bigint department_id FK
+        varchar staff_type
+        varchar phone
+        boolean active
+    }
+
+    user_account {
+        bigint id PK
+        bigint staff_id FK,UK
+        varchar username UK
+        varchar password_hash
+        varchar display_name
+        boolean enabled
+    }
+
+    role {
+        bigint id PK
+        varchar code UK
+        varchar name
+        boolean active
+    }
+
+    permission {
+        bigint id PK
+        varchar code UK
+        varchar name
+    }
+
+    user_role {
+        bigint user_id PK,FK
+        bigint role_id PK,FK
+    }
+
+    role_permission {
+        bigint role_id PK,FK
+        bigint permission_id PK,FK
+    }
+
+    patient {
+        bigint id PK
+        varchar patient_no UK
+        varchar name
+        varchar gender
+        date birth_date
+        varchar identity_number UK
+        varchar phone
+    }
+
+    admission {
+        bigint id PK
+        varchar admission_no UK
+        bigint patient_id FK
+        bigint department_id FK
+        bigint attending_doctor_id FK
+        bigint current_bed_id FK
+        bigint created_by FK
+        varchar status
+        datetime admission_time
+        datetime discharge_time
+        varchar nursing_level
+        int version
+    }
+
+    bed_usage {
+        bigint id PK
+        bigint admission_id FK
+        bigint bed_id FK
+        bigint assigned_by FK
+        datetime start_time
+        datetime end_time
+        varchar end_reason
+        bigint active_bed_key UK
+    }
+
+    transfer_record {
+        bigint id PK
+        bigint admission_id FK
+        varchar transfer_type
+        bigint from_department_id FK
+        bigint to_department_id FK
+        bigint from_bed_id FK
+        bigint to_bed_id FK
+        bigint from_doctor_id FK
+        bigint to_doctor_id FK
+        bigint operated_by FK
+        datetime transferred_at
+        varchar reason
+    }
+
+    medical_item {
+        bigint id PK
+        varchar item_code UK
+        varchar name
+        varchar item_type
+        varchar unit
+        decimal unit_price
+        decimal stock_quantity
+        decimal low_stock_threshold
+        int version
+        boolean active
+    }
+
+    medical_order {
+        bigint id PK
+        varchar order_no UK
+        bigint admission_id FK
+        bigint prescribed_by FK
+        varchar status
+        datetime start_time
+        datetime planned_end_time
+    }
+
+    drug_profile {
+        bigint medical_item_id PK,FK
+        varchar dose_unit
+        decimal dose_units_per_stock
+        varchar allowed_routes
+    }
+
+    order_group {
+        bigint id PK
+        bigint medical_order_id FK
+        varchar name
+        varchar route
+        varchar order_type
+        datetime start_time
+        datetime end_time
+    }
+
+    order_item {
+        bigint id PK
+        bigint medical_order_id FK
+        bigint medical_item_id FK
+        bigint group_id FK
+        decimal dosage
+        decimal quantity_per_execution
+        varchar order_type
+        varchar item_status
+        int planned_administration_count
+        decimal dispensed_quantity
+        decimal administered_quantity
+        decimal executed_quantity
+        varchar route
+    }
+
+    execution_record {
+        bigint id PK
+        varchar request_no UK
+        bigint order_item_id FK
+        bigint executor_id FK
+        bigint reversed_execution_id FK
+        datetime execution_time
+        decimal quantity
+        varchar status
+        varchar phase
+        varchar batch_key
+    }
+
+    drug_inventory_transaction {
+        bigint id PK
+        bigint medical_item_id FK
+        bigint execution_id FK
+        bigint operated_by FK
+        varchar transaction_type
+        decimal quantity
+        decimal before_quantity
+        decimal after_quantity
+        datetime created_at
+    }
+
+    deposit_transaction {
+        bigint id PK
+        varchar transaction_no UK
+        bigint admission_id FK
+        bigint original_transaction_id FK
+        bigint operated_by FK
+        varchar transaction_type
+        decimal amount
+        varchar payment_method
+        datetime transaction_time
+    }
+
+    charge_detail {
+        bigint id PK
+        varchar charge_no UK
+        bigint admission_id FK
+        bigint execution_id FK
+        bigint medical_item_id FK
+        bigint original_charge_id FK
+        varchar charge_type
+        decimal unit_price_snapshot
+        decimal quantity
+        decimal amount
+        datetime charged_at
+    }
+
+    settlement {
+        bigint id PK
+        varchar settlement_no UK
+        bigint admission_id FK,UK
+        bigint settled_by FK
+        decimal total_charge
+        decimal total_deposit
+        decimal amount_due
+        decimal refund_amount
+        varchar status
+        datetime settled_at
+    }
+
+    settlement_detail {
+        bigint id PK
+        bigint settlement_id FK
+        varchar category
+        decimal amount
+        int item_count
+    }
+
+    account_alert {
+        bigint id PK
+        bigint admission_id FK
+        bigint resolved_by FK
+        varchar alert_type
+        varchar level
+        decimal balance_snapshot
+        decimal threshold_snapshot
+        varchar status
+        datetime resolved_at
+    }
+
+    order_template {
+        bigint id PK
+        varchar name
+        boolean active
+        bigint created_by FK
+        datetime created_at
+    }
+
+    order_template_item {
+        bigint id PK
+        bigint template_id FK
+        bigint medical_item_id FK
+        int sort_order
+    }
+
+    charge_number_sequence {
+        bigint id PK
+        datetime allocated_at
+    }
+
+    audit_log {
+        bigint id PK
+        bigint user_id FK
+        varchar username
+        varchar role_codes
+        varchar action
+        varchar object_type
+        varchar object_id
+        varchar result
+        json before_value
+        json after_value
+        varchar trace_id
+        datetime created_at
+    }
+
+    %% 组织、房间与权限
+    department ||--o{ ward : "department_id"
+    ward ||--o{ room : "ward_id"
+    room ||--o{ bed : "room_id"
+    department o|--o{ staff : "department_id"
+    staff o|--o| user_account : "staff_id"
+    user_account ||--o{ user_role : "user_id"
+    role ||--o{ user_role : "role_id"
+    role ||--o{ role_permission : "role_id"
+    permission ||--o{ role_permission : "permission_id"
+
+    %% 患者与一次住院
+    patient ||--o{ admission : "patient_id"
+    department ||--o{ admission : "department_id"
+    staff ||--o{ admission : "attending_doctor_id"
+    bed o|--o{ admission : "current_bed_id"
+    user_account o|--o{ admission : "created_by"
+
+    %% 床位使用历史
+    admission ||--o{ bed_usage : "admission_id"
+    bed ||--o{ bed_usage : "bed_id"
+    user_account o|--o{ bed_usage : "assigned_by"
+
+    %% 转床和转科；同一父表通过不同语义的外键被引用两次
+    admission ||--o{ transfer_record : "admission_id"
+    department o|--o{ transfer_record : "from_department_id"
+    department o|--o{ transfer_record : "to_department_id"
+    bed o|--o{ transfer_record : "from_bed_id"
+    bed o|--o{ transfer_record : "to_bed_id"
+    staff o|--o{ transfer_record : "from_doctor_id"
+    staff o|--o{ transfer_record : "to_doctor_id"
+    user_account o|--o{ transfer_record : "operated_by"
+
+    %% 医嘱、项目和执行
+    admission ||--o{ medical_order : "admission_id"
+    staff ||--o{ medical_order : "prescribed_by"
+    medical_order ||--o{ order_item : "medical_order_id"
+    medical_order ||--o{ order_group : "medical_order_id"
+    medical_item ||--o{ order_item : "medical_item_id"
+    medical_item ||--o| drug_profile : "medical_item_id"
+    order_group o|--o{ order_item : "group_id"
+    order_item ||--o{ execution_record : "order_item_id"
+    staff ||--o{ execution_record : "executor_id"
+    execution_record o|--o{ execution_record : "reversed_execution_id"
+
+    %% 药品库存流水
+    medical_item ||--o{ drug_inventory_transaction : "medical_item_id"
+    execution_record o|--o{ drug_inventory_transaction : "execution_id"
+    user_account o|--o{ drug_inventory_transaction : "operated_by"
+
+    %% 押金流水及其冲正来源
+    admission ||--o{ deposit_transaction : "admission_id"
+    deposit_transaction o|--o{ deposit_transaction : "original_transaction_id"
+    user_account o|--o{ deposit_transaction : "operated_by"
+
+    %% 费用及其冲正来源
+    admission ||--o{ charge_detail : "admission_id"
+    execution_record o|--o{ charge_detail : "execution_id"
+    medical_item ||--o{ charge_detail : "medical_item_id"
+    charge_detail o|--o{ charge_detail : "original_charge_id"
+
+    %% 结算；admission_id 唯一，所以一次住院最多一张结算单
+    admission ||--o| settlement : "admission_id"
+    user_account o|--o{ settlement : "settled_by"
+    settlement ||--o{ settlement_detail : "settlement_id"
+
+    %% 告警与审计
+    admission ||--o{ account_alert : "admission_id"
+    user_account o|--o{ account_alert : "resolved_by"
+    user_account ||--o{ order_template : "created_by"
+    order_template ||--o{ order_template_item : "template_id"
+    medical_item ||--o{ order_template_item : "medical_item_id"
+    user_account o|--o{ audit_log : "user_id"

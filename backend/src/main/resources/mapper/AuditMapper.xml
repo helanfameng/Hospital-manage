@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.hospital.inpatient.mapper.AuditMapper">
+    <insert id="insert" parameterType="map">
+        INSERT INTO audit_log(user_id, username, role_codes, action, object_type, object_id,
+                              result, before_value, after_value, ip_address, trace_id)
+        VALUES(#{userId}, #{username}, #{roleCodes}, #{action}, #{objectType}, #{objectId},
+               #{result}, CAST(#{beforeValue} AS JSON), CAST(#{afterValue} AS JSON), #{ipAddress}, #{traceId})
+    </insert>
+    <select id="list" resultType="map">
+        SELECT id, user_id, username, role_codes, action, object_type, object_id, result,
+               before_value, after_value, ip_address, trace_id, created_at
+        FROM audit_log
+        <where>
+            <if test="username != null and username != ''">username LIKE CONCAT('%',#{username},'%')</if>
+            <if test="action != null and action != ''">AND action=#{action}</if>
+        </where>
+        ORDER BY id DESC LIMIT #{size} OFFSET #{offset}
+    </select>
+    <select id="count" resultType="long">
+        SELECT COUNT(*) FROM audit_log
+        <where>
+            <if test="username != null and username != ''">username LIKE CONCAT('%',#{username},'%')</if>
+            <if test="action != null and action != ''">AND action=#{action}</if>
+        </where>
+    </select>
+</mapper>
+

@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.hospital.inpatient.mapper.ClinicalMapper">
+    <select id="findOrder" resultType="map">
+        SELECT mo.*, a.admission_no, p.name patient_name, s.name prescriber_name
+        FROM medical_order mo
+        JOIN admission a ON a.id=mo.admission_id
+        JOIN patient p ON p.id=a.patient_id
+        JOIN staff s ON s.id=mo.prescribed_by
+        WHERE mo.id=#{id}
+    </select>
+    <select id="findOrderItems" resultType="map">
+        SELECT oi.*, mi.item_code, COALESCE(oi.item_name_snapshot,mi.name) item_name,
+               COALESCE(oi.item_type_snapshot,mi.item_type) item_type, COALESCE(oi.unit_snapshot,mi.unit) unit,
+               mi.unit_price, mi.stock_quantity, og.name group_name,
+               (SELECT COUNT(*) FROM execution_record er WHERE er.order_item_id=oi.id AND er.phase='ADMINISTER' AND er.status='SUCCESS'
+                   AND NOT EXISTS(SELECT 1 FROM execution_record rev WHERE rev.reversed_execution_id=er.id)) administration_count
+        FROM order_item oi JOIN medical_item mi ON mi.id=oi.medical_item_id
+        LEFT JOIN order_group og ON og.id=oi.group_id
+        WHERE oi.medical_order_id=#{orderId} ORDER BY oi.id
+    </select>
+    <sql id="orderFilters">
+        <include refid="com.hospital.inpatient.mapper.HospitalMapper.admissionScope" />
+        <if test="admissionId != null">AND mo.admission_id=#{admissionId}</if>
+        <if test="status != null and status != ''">AND mo.status=#{status}</if>
+        <if test="patientName != null and patientName != ''">AND LOCATE(#{patientName},p.name)&gt;0</if>
+        <if test="orderNo != null and orderNo != ''">AND LOCATE(#{orderNo},mo.order_no)&gt;0</if>
+    </sql>
+    <select id="listOrders" resultType="map">
+        SELECT mo.id, mo.order_no, mo.admission_id, mo.status,
+               mo.start_time, mo.submitted_at, mo.note, p.name patient_name, s.name prescriber_name,
+               COUNT(oi.id) item_count,COALESCE(SUM(oi.executed_quantity),0) executed_quantity
+        FROM medical_order mo
+        JOIN admission a ON a.id=mo.admission_id JOIN patient p ON p.id=a.patient_id
+        JOIN staff s ON s.id=mo.prescribed_by LEFT JOIN order_item oi ON oi.medical_order_id=mo.id
+        <where>
+            <include refid="orderFilters" />
+        </where>
+        GROUP BY mo.id, mo.order_no, mo.admission_id, mo.status,
+                 mo.start_time, mo.submitted_at, mo.note, p.name, s.name
+        ORDER BY mo.id DESC LIMIT #{size} OFFSET #{offset}
+    </select>
+    <select id="countOrders" resultType="long">
+        SELECT COUNT(*) FROM medical_order mo JOIN admission a ON a.id=mo.admission_id JOIN patient p ON p.id=a.patient_id
+        <where>
+            <include refid="orderFilters" />
+        </where>
+    </select>
+</mapper>

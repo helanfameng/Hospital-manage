@@ -1,0 +1,6 @@
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3306/hospital_inpatient?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&allowMultiQueries=true
+    username: hospital_app
+    password: ${HOSPITAL_DB_PASSWORD}
+
