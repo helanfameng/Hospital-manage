@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.hospital.inpatient.mapper.StatisticsMapper">
+    <select id="departmentCensus" resultType="map">
+        SELECT d.id department_id, d.name department_name,
+               SUM(a.status IN ('IN_HOSPITAL','PENDING_DISCHARGE')) current_inpatients,
+               SUM(DATE(a.admission_time) BETWEEN #{from} AND #{to}) admitted_count,
+               SUM(a.status='DISCHARGED' AND DATE(a.discharge_time) BETWEEN #{from} AND #{to}) discharged_count
+        FROM department d LEFT JOIN admission a ON a.department_id=d.id
+        GROUP BY d.id,d.name ORDER BY d.code
+    </select>
+    <select id="bedUtilization" resultType="map">
+        SELECT w.id ward_id, w.name ward_name, d.name department_name,
+               COUNT(b.id) total_beds,
+               SUM(b.status='OCCUPIED') occupied_beds,
+               SUM(b.status='AVAILABLE') available_beds,
+               ROUND(SUM(b.status='OCCUPIED') / NULLIF(SUM(b.status IN ('OCCUPIED','AVAILABLE')),0) * 100, 2) utilization_rate
+        FROM ward w JOIN department d ON d.id=w.department_id JOIN room r ON r.ward_id=w.id JOIN bed b ON b.room_id=r.id
+        WHERE b.active=TRUE AND r.active=TRUE AND w.active=TRUE AND d.active=TRUE
+        GROUP BY w.id,w.name,d.name ORDER BY d.name,w.name
+    </select>
+    <select id="revenueComposition" resultType="map">
+        SELECT d.id department_id, d.name department_name, c.item_type_snapshot item_type,
+               ROUND(COALESCE(SUM(c.amount),0),2) revenue
+        FROM department d
+        LEFT JOIN charge_detail c ON c.department_id=d.id AND c.charged_at >= #{from} AND c.charged_at &lt; DATE_ADD(#{to}, INTERVAL 1 DAY)
+        <where><if test="departmentId != null">d.id=#{departmentId}</if></where>
+        GROUP BY d.id,d.name,c.item_type_snapshot ORDER BY d.name,c.item_type_snapshot
+    </select>
+    <select id="drugUsage" resultType="map">
+        SELECT mi.id medical_item_id, mi.item_code, mi.name item_name, mi.unit,
+               SUM(CASE WHEN dit.transaction_type IN ('DISPENSE','RETURN') THEN -dit.quantity ELSE 0 END) used_quantity,
+               ROUND(SUM(CASE WHEN dit.transaction_type='DISPENSE' THEN ABS(dit.quantity) ELSE 0 END),3) dispensed_quantity
+        FROM drug_inventory_transaction dit JOIN medical_item mi ON mi.id=dit.medical_item_id
+        WHERE DATE(dit.created_at) BETWEEN #{from} AND #{to}
+        GROUP BY mi.id,mi.item_code,mi.name,mi.unit
+        ORDER BY used_quantity DESC LIMIT #{limit}
+    </select>
+    <select id="lengthOfStayAndDebt" resultType="map">
+        SELECT
+          ROUND(AVG(CASE WHEN a.status='DISCHARGED'
+                         THEN TIMESTAMPDIFF(HOUR,a.admission_time,a.discharge_time)/24 END),2) average_length_of_stay,
+          (SELECT COUNT(*) FROM v_overdue_accounts) overdue_patient_count,
+          (SELECT COALESCE(SUM(-available_balance),0) FROM v_overdue_accounts) overdue_amount,
+          COUNT(CASE WHEN a.status='DISCHARGED' THEN 1 END) discharged_sample_size
+        FROM admission a
+        WHERE DATE(a.admission_time) BETWEEN #{from} AND #{to}
+    </select>
+</mapper>

@@ -1,0 +1,184 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.hospital.inpatient.mapper.HospitalMapper">
+    <sql id="admissionScope">
+        <bind name="scopeDoctor" value="@com.hospital.inpatient.security.SecurityUtils@doctorScope()" />
+        <bind name="scopeDepartment" value="@com.hospital.inpatient.security.SecurityUtils@departmentScope()" />
+        <if test="scopeDoctor != null">AND a.attending_doctor_id=#{scopeDoctor}</if>
+        <if test="scopeDepartment != null">AND a.department_id=#{scopeDepartment}</if>
+    </sql>
+    <sql id="patientScope">
+        <if test="@com.hospital.inpatient.security.SecurityUtils@doctorScope()!=null or @com.hospital.inpatient.security.SecurityUtils@departmentScope()!=null">
+            AND EXISTS(SELECT 1 FROM admission a WHERE a.patient_id=patient.id <include refid="admissionScope" />)
+        </if>
+    </sql>
+    <select id="listPatients" resultType="map">
+        SELECT id, patient_no, name, gender, birth_date, identity_number, phone, active, created_at
+        FROM patient
+        <where>
+            <include refid="patientScope" />
+            <if test="keyword != null and keyword != ''">
+                AND (name LIKE CONCAT('%', #{keyword}, '%')
+                 OR patient_no LIKE CONCAT('%', #{keyword}, '%')
+                 OR identity_number LIKE CONCAT('%', #{keyword}, '%'))
+            </if>
+        </where>
+        ORDER BY id DESC LIMIT #{size} OFFSET #{offset}
+    </select>
+    <select id="countPatients" resultType="long">
+        SELECT COUNT(*) FROM patient
+        <where>
+            <include refid="patientScope" />
+            <if test="keyword != null and keyword != ''">
+                AND (name LIKE CONCAT('%', #{keyword}, '%')
+                 OR patient_no LIKE CONCAT('%', #{keyword}, '%')
+                 OR identity_number LIKE CONCAT('%', #{keyword}, '%'))
+            </if>
+        </where>
+    </select>
+    <select id="findPatient" resultType="map">
+        SELECT * FROM patient WHERE id = #{id} <include refid="patientScope" />
+    </select>
+    <insert id="insertPatient" parameterType="map" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO patient(patient_no, name, gender, birth_date, identity_number, phone, address,
+                            emergency_contact, emergency_phone)
+        VALUES(#{patientNo}, #{name}, #{gender}, #{birthDate}, #{identityNumber}, #{phone}, #{address},
+               #{emergencyContact}, #{emergencyPhone})
+    </insert>
+    <update id="updatePatient" parameterType="map">
+        UPDATE patient SET name=#{name}, gender=#{gender}, birth_date=#{birthDate}, phone=#{phone},
+            address=#{address}, emergency_contact=#{emergencyContact}, emergency_phone=#{emergencyPhone},
+            active=#{active}
+        WHERE id=#{id}
+    </update>
+    <select id="patientAdmissions" resultType="map">
+        SELECT id, admission_no, status, admission_time, discharge_time, department_id, attending_doctor_id
+        FROM admission a WHERE patient_id = #{patientId} <include refid="admissionScope" /> ORDER BY admission_time DESC
+    </select>
+
+    <select id="listAdmissions" resultType="map">
+        SELECT a.id admission_id,a.admission_no,p.patient_no,p.name patient_name,p.gender,d.id department_id,d.name department_name,
+          s.name attending_doctor_name,w.name ward_name,r.room_no,b.id bed_id,b.bed_no,a.admission_time,a.status
+        FROM admission a JOIN patient p ON p.id=a.patient_id JOIN department d ON d.id=a.department_id
+        JOIN staff s ON s.id=a.attending_doctor_id LEFT JOIN bed b ON b.id=a.current_bed_id
+        LEFT JOIN room r ON r.id=b.room_id LEFT JOIN ward w ON w.id=r.ward_id
+        <where>
+            <include refid="admissionScope" />
+            <choose>
+                <when test="status == null or status == ''">AND a.status IN ('IN_HOSPITAL','PENDING_DISCHARGE')</when>
+                <when test="status != 'ALL'">AND a.status=#{status}</when>
+            </choose>
+            <if test="departmentId != null">AND a.department_id=#{departmentId}</if>
+            <if test="keyword != null and keyword != ''">AND (p.name LIKE CONCAT('%',#{keyword},'%') OR p.patient_no LIKE CONCAT('%',#{keyword},'%') OR a.admission_no LIKE CONCAT('%',#{keyword},'%'))</if>
+        </where>
+        ORDER BY a.admission_time DESC,a.id DESC LIMIT #{size} OFFSET #{offset}
+    </select>
+    <select id="countAdmissions" resultType="long">SELECT COUNT(*) FROM admission a JOIN patient p ON p.id=a.patient_id JOIN department d ON d.id=a.department_id
+        JOIN staff s ON s.id=a.attending_doctor_id LEFT JOIN bed b ON b.id=a.current_bed_id
+        LEFT JOIN room r ON r.id=b.room_id LEFT JOIN ward w ON w.id=r.ward_id <where>
+            <include refid="admissionScope" />
+            <choose>
+                <when test="status == null or status == ''">AND a.status IN ('IN_HOSPITAL','PENDING_DISCHARGE')</when>
+                <when test="status != 'ALL'">AND a.status=#{status}</when>
+            </choose>
+            <if test="departmentId != null">AND a.department_id=#{departmentId}</if>
+            <if test="keyword != null and keyword != ''">AND (p.name LIKE CONCAT('%',#{keyword},'%') OR p.patient_no LIKE CONCAT('%',#{keyword},'%') OR a.admission_no LIKE CONCAT('%',#{keyword},'%'))</if>
+        </where></select>
+    <select id="findAdmission" resultType="map">
+        SELECT a.*, p.patient_no, p.name patient_name, p.gender, p.birth_date,
+               d.name department_name, s.name attending_doctor_name,
+               w.name ward_name, r.room_no, b.bed_no,
+               db.deposit_balance, db.total_charge, db.available_balance
+        FROM admission a
+        JOIN patient p ON p.id=a.patient_id
+        JOIN department d ON d.id=a.department_id
+        JOIN staff s ON s.id=a.attending_doctor_id
+        LEFT JOIN bed b ON b.id=a.current_bed_id
+        LEFT JOIN room r ON r.id=b.room_id
+        LEFT JOIN ward w ON w.id=r.ward_id
+        LEFT JOIN v_admission_deposit_balance db ON db.admission_id=a.id
+        WHERE a.id=#{id} <include refid="admissionScope" />
+    </select>
+    <select id="bedHistory" resultType="map">
+        SELECT bu.*, w.name ward_name, r.room_no, b.bed_no
+        FROM bed_usage bu
+        JOIN bed b ON b.id=bu.bed_id JOIN room r ON r.id=b.room_id JOIN ward w ON w.id=r.ward_id
+        WHERE bu.admission_id=#{admissionId} ORDER BY bu.start_time DESC
+    </select>
+    <update id="markPendingDischarge">
+        UPDATE admission SET status='PENDING_DISCHARGE', version=version+1
+        WHERE id=#{admissionId} AND status='IN_HOSPITAL'
+    </update>
+    <update id="cancelAdmission">
+        UPDATE admission SET status='CANCELLED', version=version+1
+        WHERE id=#{admissionId} AND status='PENDING'
+    </update>
+
+    <select id="listBeds" resultType="map">
+        SELECT b.id, b.bed_no, b.status, (b.active AND r.active AND w.active AND d.active) active, b.version, r.id room_id, r.room_no,
+               w.id ward_id, w.name ward_name, d.id department_id, d.name department_name,
+               p.name patient_name, a.admission_no
+        FROM bed b
+        JOIN room r ON r.id=b.room_id JOIN ward w ON w.id=r.ward_id JOIN department d ON d.id=w.department_id
+        LEFT JOIN admission a ON a.current_bed_id=b.id AND a.status IN ('IN_HOSPITAL','PENDING_DISCHARGE')
+            <include refid="admissionScope" />
+        LEFT JOIN patient p ON p.id=a.patient_id
+        <where>
+            <if test="wardId != null">w.id=#{wardId}</if>
+            <if test="status != null and status != ''">AND b.status=#{status}</if>
+        </where>
+        ORDER BY d.id, w.id, r.room_no, b.bed_no
+    </select>
+    <update id="updateBedStatus">
+        UPDATE bed SET status=#{status}, version=version+1
+        WHERE id=#{bedId} AND status != 'OCCUPIED'
+    </update>
+    <select id="listDepartments" resultType="map">
+        SELECT id, code, name, description, active FROM department ORDER BY code
+    </select>
+    <select id="listStaff" resultType="map">
+        SELECT s.id, s.staff_no, s.name, s.staff_type, s.department_id, d.name department_name, s.active
+        FROM staff s LEFT JOIN department d ON d.id=s.department_id
+        <where>
+            <if test="staffType != null and staffType != ''">s.staff_type=#{staffType}</if>
+            <if test="departmentId != null">AND s.department_id=#{departmentId}</if>
+        </where>
+        ORDER BY s.staff_no
+    </select>
+    <select id="listMedicalItems" resultType="map">
+        SELECT id, item_code, name, item_type, unit, unit_price, specification, dosage_form,
+               stock_quantity, low_stock_threshold, active
+        FROM medical_item
+        <where>
+            active=TRUE
+            <if test="itemType != null and itemType != ''">AND item_type=#{itemType}</if>
+            <if test="keyword != null and keyword != ''">
+                AND (name LIKE CONCAT('%',#{keyword},'%') OR item_code LIKE CONCAT('%',#{keyword},'%'))
+            </if>
+        </where>
+        ORDER BY item_type, item_code
+    </select>
+    <select id="staffIdByUserId" resultType="long">
+        SELECT staff_id FROM user_account WHERE id=#{userId}
+    </select>
+    <select id="callAdmit" statementType="CALLABLE" parameterType="map">
+        {CALL sp_admit_patient(
+            #{patientId, mode=IN, jdbcType=BIGINT},
+            #{departmentId, mode=IN, jdbcType=BIGINT},
+            #{doctorId, mode=IN, jdbcType=BIGINT},
+            #{bedId, mode=IN, jdbcType=BIGINT},
+            #{initialDeposit, mode=IN, jdbcType=DECIMAL},
+            #{operatorId, mode=IN, jdbcType=BIGINT},
+            #{admissionId, mode=OUT, jdbcType=BIGINT}
+        )}
+    </select>
+    <select id="callTransfer" statementType="CALLABLE" parameterType="map">
+        {CALL sp_transfer_bed(
+            #{admissionId, mode=IN, jdbcType=BIGINT},
+            #{targetBedId, mode=IN, jdbcType=BIGINT},
+            #{targetDoctorId, mode=IN, jdbcType=BIGINT},
+            #{reason, mode=IN, jdbcType=VARCHAR},
+            #{operatorId, mode=IN, jdbcType=BIGINT}
+        )}
+    </select>
+</mapper>

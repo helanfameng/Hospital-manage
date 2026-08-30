@@ -1,0 +1,10 @@
+spring:
+  datasource:
+    url: ${HOSPITAL_TEST_DB_URL}
+    username: ${HOSPITAL_DB_USERNAME:hospital_app}
+    password: ${HOSPITAL_DB_PASSWORD:}
+  flyway:
+    clean-disabled: true
+hospital:
+  bootstrap:
+    admin-password: ${HOSPITAL_BOOTSTRAP_ADMIN_PASSWORD:}
