@@ -1,0 +1,73 @@
+%% V1-V5 严格关系模型图：每个节点均为 V1 建表语句中的表；每条线均对应实际外键。
+%% 1:N 表示父表一条记录可被子表多条记录引用；0..1 表示该外键可为空或唯一。
+flowchart TB
+  subgraph ORG[组织、人员与权限]
+    DEPT[department] -->|"1:N ward.department_id"| WARD[ward]
+    WARD -->|"1:N room.ward_id"| ROOM[room]
+    ROOM -->|"1:N bed.room_id"| BED[bed]
+    DEPT -->|"1:N staff.department_id（可空）"| STAFF[staff]
+    STAFF -->|"1:0..1 user_account.staff_id（唯一、可空）"| USER[user_account]
+    USER -->|"1:N user_role.user_id"| USERROLE[user_role]
+    ROLE[role] -->|"1:N user_role.role_id"| USERROLE
+    ROLE -->|"1:N role_permission.role_id"| ROLEPERM[role_permission]
+    PERM[permission] -->|"1:N role_permission.permission_id"| ROLEPERM
+  end
+
+  subgraph STAY[患者、住院与床位]
+    PATIENT[patient] -->|"1:N admission.patient_id"| ADMISSION[admission]
+    DEPT -->|"1:N admission.department_id"| ADMISSION
+    STAFF -->|"1:N admission.attending_doctor_id"| ADMISSION
+    BED -->|"1:N admission.current_bed_id（可空）"| ADMISSION
+    USER -->|"1:N admission.created_by（可空）"| ADMISSION
+    ADMISSION -->|"1:N bed_usage.admission_id"| BEDUSE[bed_usage]
+    BED -->|"1:N bed_usage.bed_id"| BEDUSE
+    USER -->|"1:N bed_usage.assigned_by（可空）"| BEDUSE
+    ADMISSION -->|"1:N transfer_record.admission_id"| TRANSFER[transfer_record]
+    DEPT -->|"1:N transfer_record.from_department_id / to_department_id（可空）"| TRANSFER
+    BED -->|"1:N transfer_record.from_bed_id / to_bed_id（可空）"| TRANSFER
+    STAFF -->|"1:N transfer_record.from_doctor_id / to_doctor_id（可空）"| TRANSFER
+    USER -->|"1:N transfer_record.operated_by（可空）"| TRANSFER
+  end
+
+  subgraph ORDERFLOW[医嘱、执行与库存]
+    ADMISSION -->|"1:N medical_order.admission_id"| MORDER[medical_order]
+    STAFF -->|"1:N medical_order.prescribed_by"| MORDER
+    MORDER -->|"1:N order_group.medical_order_id"| OGROUP[order_group]
+    MORDER -->|"1:N order_item.medical_order_id"| OITEM[order_item]
+    ITEM[medical_item] -->|"1:0..1 drug_profile.medical_item_id"| DRUG[drug_profile]
+    ITEM -->|"1:N order_item.medical_item_id"| OITEM
+    OGROUP -->|"1:N order_item.group_id（可空）"| OITEM
+    OITEM -->|"1:N execution_record.order_item_id"| EXEC[execution_record]
+    STAFF -->|"1:N execution_record.executor_id"| EXEC
+    EXEC -->|"1:0..1 execution_record.reversed_execution_id（唯一、可空）"| EXEC
+    ITEM -->|"1:N drug_inventory_transaction.medical_item_id"| INVENTORY[drug_inventory_transaction]
+    EXEC -->|"1:N drug_inventory_transaction.execution_id（可空）"| INVENTORY
+    USER -->|"1:N drug_inventory_transaction.operated_by（可空）"| INVENTORY
+  end
+
+  subgraph FINANCE[押金、收费与结算]
+    ADMISSION -->|"1:N deposit_transaction.admission_id"| DEPOSIT[deposit_transaction]
+    DEPOSIT -->|"1:0..1 deposit_transaction.original_transaction_id（唯一、可空）"| DEPOSIT
+    USER -->|"1:N deposit_transaction.operated_by（可空）"| DEPOSIT
+    ADMISSION -->|"1:N charge_detail.admission_id"| CHARGE[charge_detail]
+    EXEC -->|"1:N charge_detail.execution_id（可空）"| CHARGE
+    ITEM -->|"1:N charge_detail.medical_item_id"| CHARGE
+    DEPT -->|"1:N charge_detail.department_id"| CHARGE
+    CHARGE -->|"1:0..1 charge_detail.original_charge_id（唯一、可空）"| CHARGE
+    ADMISSION -->|"1:0..1 settlement.admission_id（唯一）"| SETTLEMENT[settlement]
+    USER -->|"1:N settlement.settled_by（可空）"| SETTLEMENT
+    SETTLEMENT -->|"1:N settlement_detail.settlement_id"| SDETAIL[settlement_detail]
+    ADMISSION -->|"1:N account_alert.admission_id"| ALERT[account_alert]
+    USER -->|"1:N account_alert.resolved_by（可空）"| ALERT
+  end
+
+  subgraph SUPPORT[模板、审计与技术表]
+    USER -->|"1:N order_template.created_by"| TEMPLATE[order_template]
+    TEMPLATE -->|"1:N order_template_item.template_id"| TEMPLATEITEM[order_template_item]
+    ITEM -->|"1:N order_template_item.medical_item_id"| TEMPLATEITEM
+    USER -->|"1:N audit_log.user_id（可空）"| AUDIT[audit_log]
+    SEQ[charge_number_sequence（无外键技术表）]
+  end
+
+  classDef table fill:#fff,stroke:#111,stroke-width:1.5px,color:#111;
+  class DEPT,WARD,ROOM,BED,STAFF,USER,ROLE,PERM,USERROLE,ROLEPERM,PATIENT,ADMISSION,BEDUSE,TRANSFER,MORDER,OGROUP,OITEM,ITEM,DRUG,EXEC,INVENTORY,DEPOSIT,CHARGE,SETTLEMENT,SDETAIL,ALERT,TEMPLATE,TEMPLATEITEM,AUDIT,SEQ table;

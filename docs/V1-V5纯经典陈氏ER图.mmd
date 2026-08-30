@@ -1,0 +1,42 @@
+%% V1-V5 纯经典陈氏 ER 图（课堂展示主图）
+%% 矩形=实体；菱形=关系；椭圆=关系属性；连线 1/N 表示一/多。
+flowchart LR
+  PATIENT[患者] ---|1| R_ADMIT{住院} ---|N| ADMISSION[住院记录]
+  DEPT[科室] ---|1| R_TREAT{收治} ---|N| ADMISSION
+  STAFF[职工] ---|1| R_ATTEND{主管} ---|N| ADMISSION
+  BED[床位] ---|1| R_CURRENT{当前入住} ---|N| ADMISSION
+
+  DEPT ---|1| R_WARD{下设} ---|N| WARD[病区]
+  WARD ---|1| R_ROOM{包含} ---|N| ROOM[病房]
+  ROOM ---|1| R_BED{配置} ---|N| BED
+  DEPT ---|1| R_STAFF{配属} ---|N| STAFF
+
+  ADMISSION ---|1| R_OCCUPY{占用} ---|N| BED
+  ATTR_OCCUPY([开始时间、结束时间、结束原因]) -.关系属性.-> R_OCCUPY
+  ADMISSION ---|1| R_TRANSFER{发生转床/转科} ---|N| TRANSFER[转床/转科记录]
+
+  ADMISSION ---|1| R_ORDER_STAY{拥有} ---|N| ORDER[医嘱]
+  STAFF ---|1| R_PRESCRIBE{开立} ---|N| ORDER
+  ORDER ---|1| R_CONTAIN{包含} ---|N| ORDER_ITEM[医嘱项目]
+  ITEM[医疗项目] ---|1| R_REFERENCE{被引用} ---|N| ORDER_ITEM
+  ITEM ---|1| R_DRUG{具有药品属性} ---|0..1| DRUG[药品属性]
+  ORDER_ITEM ---|1| R_EXECUTE{产生执行} ---|N| EXECUTION[执行记录]
+  STAFF ---|1| R_EXECUTOR{执行} ---|N| EXECUTION
+
+  ADMISSION ---|1| R_CHARGE_STAY{产生费用} ---|N| CHARGE[收费明细]
+  ITEM ---|1| R_CHARGE_ITEM{作为收费项目} ---|N| CHARGE
+  EXECUTION ---|1| R_CHARGE_EXEC{执行计费} ---|N| CHARGE
+  ADMISSION ---|1| R_SETTLE{出院结算} ---|0..1| SETTLEMENT[结算单]
+  ADMISSION ---|1| R_DEPOSIT{发生押金业务} ---|N| DEPOSIT[押金流水]
+
+  USER[系统账号] ---|1| R_ACCOUNT{绑定} ---|0..1| STAFF
+  USER ---|1| R_HANDLE_DEPOSIT{办理} ---|N| DEPOSIT
+  USER ---|N| R_USER_ROLE{分配} ---|N| ROLE[角色]
+  ROLE ---|N| R_ROLE_PERMISSION{授予} ---|N| PERMISSION[权限]
+
+  classDef entity fill:#fff,stroke:#111,stroke-width:2px,color:#111;
+  classDef relationship fill:#fff,stroke:#111,stroke-width:2px,color:#111;
+  classDef attribute fill:#fff,stroke:#555,stroke-width:1px,color:#111;
+  class PATIENT,DEPT,STAFF,BED,WARD,ROOM,ADMISSION,TRANSFER,ORDER,ORDER_ITEM,ITEM,DRUG,EXECUTION,CHARGE,SETTLEMENT,DEPOSIT,USER,ROLE,PERMISSION entity;
+  class R_ADMIT,R_TREAT,R_ATTEND,R_CURRENT,R_WARD,R_ROOM,R_BED,R_STAFF,R_OCCUPY,R_TRANSFER,R_ORDER_STAY,R_PRESCRIBE,R_CONTAIN,R_REFERENCE,R_DRUG,R_EXECUTE,R_EXECUTOR,R_CHARGE_STAY,R_CHARGE_ITEM,R_CHARGE_EXEC,R_SETTLE,R_DEPOSIT,R_ACCOUNT,R_HANDLE_DEPOSIT,R_USER_ROLE,R_ROLE_PERMISSION relationship;
+  class ATTR_OCCUPY attribute;
