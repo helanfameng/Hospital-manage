@@ -14,9 +14,12 @@ public interface HospitalMapper {
     List<Map<String, Object>> patientAdmissions(@Param("patientId") long patientId);
 
     List<Map<String, Object>> listAdmissions(@Param("status") String status, @Param("departmentId") Long departmentId,
-                                             @Param("keyword") String keyword, @Param("offset") int offset, @Param("size") int size);
+                                             @Param("keyword") String keyword, @Param("longStayDays") Integer longStayDays,
+                                             @Param("settlementBlocked") Boolean settlementBlocked,
+                                             @Param("offset") int offset, @Param("size") int size);
     long countAdmissions(@Param("status") String status, @Param("departmentId") Long departmentId,
-                         @Param("keyword") String keyword);
+                         @Param("keyword") String keyword, @Param("longStayDays") Integer longStayDays,
+                         @Param("settlementBlocked") Boolean settlementBlocked);
     Map<String, Object> findAdmission(@Param("id") long id);
     List<Map<String, Object>> bedHistory(@Param("admissionId") long admissionId);
     int markPendingDischarge(@Param("admissionId") long admissionId);
@@ -32,4 +35,3 @@ public interface HospitalMapper {
     void callAdmit(Map<String, Object> parameters);
     void callTransfer(Map<String, Object> parameters);
 }
-

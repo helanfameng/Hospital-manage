@@ -52,6 +52,7 @@ class DatabaseIntegrationTest {
     @Autowired AdmissionService admissions;
     @Autowired OrderService orders;
     @Autowired TypedOrderService typedOrders;
+    @Autowired InventoryService inventory;
     @Autowired FinancialService finance;
     @Autowired AdminService admins;
     @Autowired AuthService auth;
@@ -136,8 +137,8 @@ class DatabaseIntegrationTest {
     }
     void rejects(Runnable action) { assertThatThrownBy(action::run).isInstanceOfAny(BusinessException.class,DataAccessException.class); }
 
-    Requests.OrderLine typedDrug(long drug,String type,String group) {
-        return new Requests.OrderLine(drug,new BigDecimal("2"),BigDecimal.ONE,group==null?"口服":"静脉滴注","测试指令","片",type,null,null,group);
+    Requests.OrderLine typedDrug(long drug,String type,String ignoredGrouping) {
+        return new Requests.OrderLine(drug,new BigDecimal("2"),BigDecimal.ONE,ignoredGrouping==null?"口服":"静脉滴注","测试指令","片",type,null,null,ignoredGrouping);
     }
     long typedOrder(long admission,Requests.OrderLine... lines) {
         return id(orders.create(new Requests.OrderCreate(admission,"新版回归",List.of(lines))));
@@ -197,14 +198,14 @@ class DatabaseIntegrationTest {
         orders.changeStatus(o,"submit");
         long execution=typedExecute(line,"DISPENSE");
         String number=value("SELECT charge_no FROM charge_detail WHERE execution_id=?",execution);
-        assertThat(number).matches("C[0-9]{8}-[0-9]{8,19}");
+        assertThat(number).matches("C[0-9a-f]{30}");
         var normal=financialMapper.charges(a).get(0);
         assertThat(((Number)normal.get("order_id")).longValue()).isEqualTo(o);
         assertThat(normal.get("order_no")).isEqualTo(value("SELECT order_no FROM medical_order WHERE id=?",o));
         typedOrders.reverse(execution,"numbering regression");
         var charges=financialMapper.charges(a);
         assertThat(charges).hasSize(2);
-        assertThat(charges.get(0).get("charge_no").toString()).matches("CR[0-9]{8}-[0-9]{8,19}");
+        assertThat(charges.get(0).get("charge_no").toString()).matches("CR[0-9a-f]{30}");
         assertThat(charges).allSatisfy(c -> assertThat(c.get("order_no")).isEqualTo(normal.get("order_no")));
         assertThat(value("SELECT charge_no FROM charge_detail WHERE id=?",normal.get("id"))).isEqualTo(number);
         assertThat(money("SELECT SUM(amount) FROM charge_detail WHERE admission_id=?",a)).isEqualByComparingTo("0");
@@ -215,17 +216,17 @@ class DatabaseIntegrationTest {
 
     @Test void chargeSequenceIsUniqueAcrossConcurrentAllocations() throws Exception {
         var allocated=new java.util.concurrent.ConcurrentLinkedQueue<String>();
-        assertThat(race(() -> allocated.add(ChargeNumber.next(jdbcTemplate,false)),
-            () -> allocated.add(ChargeNumber.next(jdbcTemplate,false)))).containsExactly(true,true);
+        assertThat(race(() -> allocated.add(ChargeNumber.next(false)),
+            () -> allocated.add(ChargeNumber.next(false)))).containsExactly(true,true);
         assertThat(allocated).hasSize(2).doesNotHaveDuplicates();
-        String today=value("SELECT DATE_FORMAT(DATE_ADD(UTC_TIMESTAMP(),INTERVAL 8 HOUR),'%Y%m%d')");
-        assertThat(allocated).allSatisfy(n -> assertThat(n).startsWith("C"+today+"-").matches("C[0-9]{8}-[0-9]{8,19}"));
+        assertThat(allocated).allSatisfy(n -> assertThat(n).matches("C[0-9a-f]{30}"));
     }
 
     @Test void typedMedicationSeparatesDispensingAdministrationAndCharges() {
         long a=admission(),o=typedOrder(a,typedDrug(drugId,"TEMPORARY",null)),line=item(o,drugId);
         assertThat(orders.detail(o)).doesNotContainKey("frequency");
         assertThat(number("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='medical_order' AND column_name='frequency'")).isZero();
+        assertThat(number("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='order_item' AND column_name='administered_quantity'")).isZero();
         orders.changeStatus(o,"submit");
         rejects(() -> typedExecute(line,"ADMINISTER"));
         long dispense=typedExecute(line,"DISPENSE");
@@ -235,7 +236,7 @@ class DatabaseIntegrationTest {
         long administer=typedExecute(line,"ADMINISTER");
         assertThat(value("SELECT status FROM medical_order WHERE id=?",o)).isEqualTo("COMPLETED");
         assertThat(number("SELECT COUNT(*) FROM charge_detail WHERE admission_id=?",a)).isEqualTo(1);
-        assertThat(money("SELECT administered_quantity FROM order_item WHERE id=?",line)).isEqualByComparingTo("2");
+        assertThat(money("SELECT executed_quantity FROM order_item WHERE id=?",line)).isEqualByComparingTo("2");
         rejects(() -> typedExecute(line,"ADMINISTER"));
         rejects(() -> typedOrders.reverse(dispense,"used drug"));
         typedOrders.reverse(administer,"错误给药记录纠正，仅测试");
@@ -276,82 +277,82 @@ class DatabaseIntegrationTest {
             assertThat(number("SELECT COUNT(*) FROM charge_detail WHERE admission_id=? AND medical_item_id=? AND quantity=1 AND amount=20",a,service)).isEqualTo(3);
         }
         assertThat(money("SELECT total_charge FROM v_admission_deposit_balance WHERE admission_id=?",a)).isEqualByComparingTo("180");
-        long drugOrder=typedOrder(a,new Requests.OrderLine(drugId,BigDecimal.ONE,new BigDecimal("2"),"口服",null,"片","TEMPORARY",null,null,null,20,null));
-        assertThat(money("SELECT quantity_per_execution FROM order_item WHERE medical_order_id=?",drugOrder)).isEqualByComparingTo("2");
+        long drugOrder=typedOrder(a,new Requests.OrderLine(drugId,BigDecimal.ONE,new BigDecimal("2"),"口服",null,"片","TEMPORARY",null,null));
+        assertThat(money("SELECT requested_dispense_quantity FROM order_item WHERE medical_order_id=?",drugOrder)).isEqualByComparingTo("2");
         long otherUnit=typedOrder(a,new Requests.OrderLine(examId,null,new BigDecimal("2"),null,null,null,"TEMPORARY",null,null,null));
-        assertThat(money("SELECT quantity_per_execution FROM order_item WHERE medical_order_id=?",otherUnit)).isEqualByComparingTo("2");
+        assertThat(money("SELECT execution_quantity_per_operation FROM order_item WHERE medical_order_id=?",otherUnit)).isEqualByComparingTo("2");
     }
-    Requests.OrderLine plannedDrug(long drug,int count,String quantity,String group,String reason) {
-        return new Requests.OrderLine(drug,BigDecimal.TEN,new BigDecimal(quantity),group==null?"口服":"静脉滴注",null,"片","TEMPORARY",null,null,group,count,reason);
+    Requests.OrderLine plannedDrug(long drug,int count,String quantity,String ignoredGrouping,String reason) {
+        return new Requests.OrderLine(drug,BigDecimal.TEN,new BigDecimal(quantity),ignoredGrouping==null?"口服":"静脉滴注",null,"片","TEMPORARY",null,null,ignoredGrouping,count,reason);
     }
     @SuppressWarnings("unchecked")
     Map<String,Object> detailLine(long order,long line) {
         return ((List<Map<String,Object>>)orders.detail(order).get("items")).stream().filter(r->id(r)==line).findFirst().orElseThrow();
     }
-    @Test void temporaryPlanCompletesOnlyAfterAllDosesAndReversalRestoresProgress() {
-        long a=admission(),o=typedOrder(a,plannedDrug(drugId,2,"2",null,null)),line=item(o,drugId);
+    @Test void temporaryMedicationHasOneTaskAndReversalReopensIt() {
+        long a=admission(),o=typedOrder(a,typedDrug(drugId,"TEMPORARY",null)),line=item(o,drugId);
         orders.changeStatus(o,"submit"); long dispense=typedExecute(line,"DISPENSE");
-        typedOrders.execute(new Requests.OrderExecution(UUID.randomUUID().toString(),line,"ADMINISTER",true,"暂未给药"));
+        long administration=typedExecute(line,"ADMINISTER");
+        assertThat(value("SELECT item_status FROM order_item WHERE id=?",line)).isEqualTo("COMPLETED");
+        assertThat(((Number)detailLine(o,line).get("administration_count")).intValue()).isEqualTo(1);
+        assertThat(typedOrders.pending("ADMINISTER",null)).noneMatch(r->((Number)r.get("order_item_id")).longValue()==line);
+        rejects(()->typedOrders.reverse(dispense,"不能整笔退回已用药品"));
+        rejects(()->typedExecute(line,"ADMINISTER"));
+        typedOrders.reverse(administration,"错误给药记录纠正");
+        assertThat(value("SELECT status FROM medical_order WHERE id=?",o)).isEqualTo("SUBMITTED");
         assertThat(((Number)detailLine(o,line).get("administration_count")).intValue()).isZero();
         typedExecute(line,"ADMINISTER");
-        assertThat(value("SELECT item_status FROM order_item WHERE id=?",line)).isEqualTo("IN_PROGRESS");
-        assertThat(((Number)detailLine(o,line).get("administration_count")).intValue()).isEqualTo(1);
-        assertThat(typedOrders.pending("ADMINISTER",null)).anySatisfy(r->{
-            assertThat(((Number)r.get("order_item_id")).longValue()).isEqualTo(line);
-            assertThat(((Number)r.get("administration_count")).intValue()).isEqualTo(1);
-        });
-        rejects(()->typedOrders.change(o,"complete",line));
-        rejects(()->typedOrders.reverse(dispense,"不能整笔退回已用药品"));
-        long second=typedExecute(line,"ADMINISTER");
         assertThat(value("SELECT status FROM medical_order WHERE id=?",o)).isEqualTo("COMPLETED");
-        assertThat(((Number)detailLine(o,line).get("administration_count")).intValue()).isEqualTo(2);
-        assertThat(typedOrders.pending("ADMINISTER",null)).noneSatisfy(r->assertThat(((Number)r.get("order_item_id")).longValue()).isEqualTo(line));
-        rejects(()->typedExecute(line,"ADMINISTER"));
-        typedOrders.reverse(second,"错误给药记录纠正");
-        assertThat(value("SELECT status FROM medical_order WHERE id=?",o)).isEqualTo("IN_PROGRESS");
-        assertThat(((Number)detailLine(o,line).get("administration_count")).intValue()).isEqualTo(1);
-        rejects(()->typedOrders.reverse(second,"重复纠正"));
-        typedExecute(line,"ADMINISTER");
-        assertThat(value("SELECT status FROM medical_order WHERE id=?",o)).isEqualTo("COMPLETED");
-        assertThat(money("SELECT administered_quantity FROM order_item WHERE id=?",line)).isEqualByComparingTo("20");
-        assertThat(money("SELECT stock_quantity FROM medical_item WHERE id=?",drugId)).isEqualByComparingTo("98");
+        assertThat(money("SELECT executed_quantity FROM order_item WHERE id=?",line)).isEqualByComparingTo("2");
         assertThat(number("SELECT COUNT(*) FROM charge_detail WHERE admission_id=?",a)).isEqualTo(1);
-        assertThat(money("SELECT SUM(amount) FROM charge_detail WHERE admission_id=?",a)).isEqualByComparingTo("20");
     }
-    @Test void planValidationAndExcessPackagesNeverIncreaseDoseCount() {
+    @Test void medicationTimingAndActualQuantityVarianceAreValidated() {
         long a=admission();
-        for(int count:List.of(0,-1,1001)) rejects(()->typedOrder(a,plannedDrug(drugId,count,"2",null,null)));
-        rejects(()->typedOrder(a,plannedDrug(drugId,2,"1",null,null)));
-        rejects(()->typedOrder(a,plannedDrug(drugId,2,"3",null,"  ")));
-        rejects(()->typedOrder(a,new Requests.OrderLine(drugId,BigDecimal.ONE,BigDecimal.ONE,"口服",null,"片","LONG_TERM",null,null,null,2,null)));
-        rejects(()->typedOrder(a,new Requests.OrderLine(examId,null,BigDecimal.ONE,null,null,null,"TEMPORARY",null,null,null,2,null)));
-        long o=typedOrder(a,plannedDrug(drugId,2,"3",null,"测试额外包装")),line=item(o,drugId);
-        orders.changeStatus(o,"submit"); typedExecute(line,"DISPENSE"); typedExecute(line,"ADMINISTER"); typedExecute(line,"ADMINISTER");
-        rejects(()->typedExecute(line,"ADMINISTER"));
-        assertThat(value("SELECT status FROM medical_order WHERE id=?",o)).isEqualTo("COMPLETED");
-        assertThat(detailLine(o,line).get("excess_dispense_reason")).isEqualTo("测试额外包装");
-        assertThat(money("SELECT dispensed_quantity*dose_units_per_stock-administered_quantity FROM order_item WHERE id=?",line)).isEqualByComparingTo("10");
+        rejects(()->typedOrder(a,new Requests.OrderLine(drugId,BigDecimal.ONE,BigDecimal.ONE,null,"口服",null,"片","LONG_TERM","SCHEDULED",null,null,null,null)));
+        rejects(()->typedOrder(a,new Requests.OrderLine(drugId,BigDecimal.ONE,BigDecimal.ONE,null,"口服",null,"片","LONG_TERM","PRN",60,null,null,null)));
+        long o=typedOrder(a,typedDrug(drugId,"TEMPORARY",null)),line=item(o,drugId);
+        orders.changeStatus(o,"submit");
+        rejects(()->typedOrders.execute(new Requests.OrderExecution(UUID.randomUUID().toString(),line,null,"DISPENSE",new BigDecimal("2"),null,false,null)));
+        typedOrders.execute(new Requests.OrderExecution(UUID.randomUUID().toString(),line,null,"DISPENSE",new BigDecimal("2"),"按临床需要增加",false,null));
+        assertThat(money("SELECT dispensed_quantity FROM order_item WHERE id=?",line)).isEqualByComparingTo("2");
     }
-    @Test void infusionPlansHaveMatchingCountsAndAdvanceAndReverseAtomically() {
+    @Test void lateScheduledMedicationNeedsReasonAndSkipsBacklog() {
+        long a=admission();
+        long o=id(orders.create(new Requests.OrderCreate(a,"迟发排程",List.of(new Requests.OrderLine(
+                drugId,BigDecimal.ONE,BigDecimal.ONE,null,"口服","迟发测试","片","LONG_TERM","SCHEDULED",60,null,null,null)))));
+        long line=item(o,drugId); orders.changeStatus(o,"submit"); typedExecute(line,"DISPENSE");
+        jdbcTemplate.update("UPDATE medication_schedule SET scheduled_at=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 2 HOUR) WHERE order_item_id=?",line);
+        rejects(()->typedOrders.execute(new Requests.OrderExecution(UUID.randomUUID().toString(),line,null,"ADMINISTER",BigDecimal.ONE,null,false,null)));
+        typedOrders.execute(new Requests.OrderExecution(UUID.randomUUID().toString(),line,null,"ADMINISTER",BigDecimal.ONE,null,false,"病区交接延误"));
+        java.sql.Timestamp next=jdbcTemplate.queryForObject("SELECT scheduled_at FROM medication_schedule WHERE order_item_id=? AND status='PENDING'",java.sql.Timestamp.class,line);
+        assertThat(next.toInstant()).isAfterOrEqualTo(java.time.Instant.now().plusSeconds(55*60));
+    }
+    @Test void futureTaskPreviewExpandsScheduledTimesButCannotExecuteThem() {
+        long a=admission();
+        long o=id(orders.create(new Requests.OrderCreate(a,"未来预览",List.of(new Requests.OrderLine(
+                drugId,BigDecimal.ONE,BigDecimal.ONE,null,"口服","预览测试","片","LONG_TERM","SCHEDULED",60,null,null,null)))));
+        orders.changeStatus(o,"submit"); long line=item(o,drugId);
+        var preview=typedOrders.tasks("ADMINISTER",null,"FUTURE",2,null,"SCHEDULED",null,null,null,null,null,"PLANNED_AT_ASC",1,20);
+        assertThat(preview.items()).anySatisfy(row -> {
+            assertThat(((Number)row.get("order_item_id")).longValue()).isEqualTo(line);
+            assertThat(row.get("preview_only")).isEqualTo(true);
+        });
+    }
+    @Test void infusionPlansAdvanceAndReverseIndependently() {
         long a=admission(); String code="GP"+UUID.randomUUID().toString().substring(0,20);
         jdbcTemplate.update("INSERT INTO medical_item(item_code,name,item_type,unit,unit_price,stock_quantity,inventory_managed) VALUES(?,?,'DRUG','box',30,10,TRUE)",code,code);
         long other=number("SELECT id FROM medical_item WHERE item_code=?",code);
         jdbcTemplate.update("INSERT INTO drug_profile(medical_item_id,dose_unit,dose_units_per_stock,allowed_routes) VALUES(?,'片',10,'静脉滴注')",other);
-        rejects(()->typedOrder(a,plannedDrug(drugId,2,"2","组",null),plannedDrug(other,1,"1","组",null)));
-        long o=typedOrder(a,plannedDrug(drugId,2,"2","组",null),plannedDrug(other,2,"2","组",null)),line=item(o,drugId);
+        long o=typedOrder(a,typedDrug(drugId,"TEMPORARY","组"),typedDrug(other,"TEMPORARY","组")),line=item(o,drugId);
         orders.changeStatus(o,"submit"); typedExecute(line,"DISPENSE"); typedExecute(line,"ADMINISTER");
-        assertThat(number("SELECT COUNT(*) FROM order_item WHERE medical_order_id=? AND item_status='IN_PROGRESS' AND administered_quantity=10",o)).isEqualTo(2);
-        long second=typedExecute(line,"ADMINISTER");
-        assertThat(value("SELECT status FROM medical_order WHERE id=?",o)).isEqualTo("COMPLETED");
-        typedOrders.reverse(second,"整组纠错");
-        assertThat(number("SELECT COUNT(*) FROM order_item WHERE medical_order_id=? AND item_status='IN_PROGRESS' AND administered_quantity=10",o)).isEqualTo(2);
-        assertThat(((Number)detailLine(o,item(o,other)).get("administration_count")).intValue()).isEqualTo(1);
+        assertThat(number("SELECT COUNT(*) FROM order_item WHERE medical_order_id=? AND item_status='COMPLETED' AND executed_quantity=2",o)).isEqualTo(1);
+        assertThat(((Number)detailLine(o,item(o,other)).get("administration_count")).intValue()).isZero();
     }
     @Test void concurrentFinalDoseCannotExceedPlan() throws Exception {
-        long a=admission(),o=typedOrder(a,plannedDrug(drugId,2,"2",null,null)),line=item(o,drugId);
-        orders.changeStatus(o,"submit"); typedExecute(line,"DISPENSE"); typedExecute(line,"ADMINISTER");
+        long a=admission(),o=typedOrder(a,typedDrug(drugId,"TEMPORARY",null)),line=item(o,drugId);
+        orders.changeStatus(o,"submit"); typedExecute(line,"DISPENSE");
         assertThat(race(()->typedExecute(line,"ADMINISTER"),()->typedExecute(line,"ADMINISTER"))).containsExactlyInAnyOrder(true,false);
-        assertThat(((Number)detailLine(o,line).get("administration_count")).intValue()).isEqualTo(2);
+        assertThat(((Number)detailLine(o,line).get("administration_count")).intValue()).isEqualTo(1);
         assertThat(value("SELECT status FROM medical_order WHERE id=?",o)).isEqualTo("COMPLETED");
         // The plan is complete, so leftover stock does not justify another dose.
         rejects(()->typedExecute(line,"ADMINISTER"));
@@ -360,7 +361,6 @@ class DatabaseIntegrationTest {
         long a=admission();
         rejects(() -> typedOrder(a,new Requests.OrderLine(drugId,BigDecimal.ONE,BigDecimal.ONE,"口服",null,"mL","TEMPORARY",null,null,null)));
         rejects(() -> typedOrder(a,new Requests.OrderLine(drugId,BigDecimal.ONE,new BigDecimal("1.001"),"口服",null,"片","TEMPORARY",null,null,null)));
-        rejects(() -> typedOrder(a,typedDrug(drugId,"TEMPORARY","孤立组")));
         long bedFee=number("SELECT MIN(id) FROM medical_item WHERE item_type='BED_FEE'");
         rejects(() -> typedOrder(a,new Requests.OrderLine(bedFee,null,BigDecimal.ONE,null,null,null,"TEMPORARY",null,null,null)));
         long o=typedOrder(a,new Requests.OrderLine(examId,null,BigDecimal.ONE,null,"检查",null,"TEMPORARY",null,null,null));
@@ -369,22 +369,19 @@ class DatabaseIntegrationTest {
         assertThat(money("SELECT total_charge FROM v_admission_deposit_balance WHERE admission_id=?",a)).isEqualByComparingTo("20");
         assertThat(value("SELECT status FROM medical_order WHERE id=?",o)).isEqualTo("COMPLETED");
     }
-    @Test void typedInfusionGroupIsAtomicAndTemplatesRemainEditableLists() {
+    @Test void typedInfusionItemsRemainIndependentAndTemplatesRemainEditableLists() {
         long a=admission(); String code="G"+UUID.randomUUID().toString().substring(0,20);
         jdbcTemplate.update("INSERT INTO medical_item(item_code,name,item_type,unit,unit_price,stock_quantity,inventory_managed) VALUES(?,?,'DRUG','box',30,0,TRUE)",code,code);
         long other=number("SELECT id FROM medical_item WHERE item_code=?",code);
         jdbcTemplate.update("INSERT INTO drug_profile(medical_item_id,dose_unit,dose_units_per_stock,allowed_routes) VALUES(?,'片',10,'静脉滴注')",other);
         long o=typedOrder(a,typedDrug(drugId,"TEMPORARY","测试组"),typedDrug(other,"TEMPORARY","测试组")),line=item(o,drugId);
-        orders.changeStatus(o,"submit"); rejects(() -> typedExecute(line,"DISPENSE"));
-        assertThat(money("SELECT stock_quantity FROM medical_item WHERE id=?",drugId)).isEqualByComparingTo("100");
-        assertThat(number("SELECT COUNT(*) FROM charge_detail WHERE admission_id=?",a)).isZero();
-        jdbcTemplate.update("UPDATE medical_item SET stock_quantity=5 WHERE id=?",other);
+        orders.changeStatus(o,"submit");
         long dispense=typedExecute(line,"DISPENSE");
-        assertThat(number("SELECT COUNT(*) FROM order_item WHERE medical_order_id=? AND dispensed_quantity=1",o)).isEqualTo(2);
-        typedOrders.reverse(dispense,"整组退药测试");
+        assertThat(number("SELECT COUNT(*) FROM order_item WHERE medical_order_id=? AND dispensed_quantity=1",o)).isEqualTo(1);
+        typedOrders.reverse(dispense,"单项退药测试");
         assertThat(number("SELECT COUNT(*) FROM order_item WHERE medical_order_id=? AND dispensed_quantity=0",o)).isEqualTo(2);
         typedExecute(line,"DISPENSE"); typedExecute(line,"ADMINISTER");
-        assertThat(value("SELECT status FROM medical_order WHERE id=?",o)).isEqualTo("COMPLETED");
+        assertThat(value("SELECT status FROM medical_order WHERE id=?",o)).isEqualTo("IN_PROGRESS");
         var template=typedOrders.saveTemplate(new com.hospital.inpatient.controller.TypedOrderController.Template("测试清单",null,List.of(drugId,examId)));
         assertThat(number("SELECT COUNT(*) FROM order_template_item WHERE template_id=?",id(template))).isEqualTo(2);
         typedOrders.disableTemplate(id(template));
@@ -439,7 +436,8 @@ class DatabaseIntegrationTest {
     @Test void flywayCreatesCourseDesignObjectsAndDemoScale() {
         assertThat(number("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_type='BASE TABLE'")).isGreaterThanOrEqualTo(25);
         assertThat(number("SELECT COUNT(*) FROM information_schema.views WHERE table_schema=DATABASE()")).isGreaterThanOrEqualTo(6);
-        assertThat(number("SELECT COUNT(*) FROM information_schema.routines WHERE routine_schema=DATABASE() AND routine_type='PROCEDURE'")).isGreaterThanOrEqualTo(5);
+        assertThat(jdbcTemplate.queryForList("SELECT routine_name FROM information_schema.routines WHERE routine_schema=DATABASE() AND routine_type='PROCEDURE'",String.class))
+            .containsExactlyInAnyOrder("sp_admit_patient","sp_transfer_bed","sp_refresh_account_alert","sp_discharge_settlement");
         assertThat(number("SELECT COUNT(*) FROM patient")).isGreaterThanOrEqualTo(30);
         assertThat(number("SELECT COUNT(*) FROM execution_record")).isGreaterThanOrEqualTo(60);
         assertThat(number("SELECT COUNT(*) FROM charge_detail")).isGreaterThanOrEqualTo(60);
@@ -509,10 +507,11 @@ class DatabaseIntegrationTest {
         admissions.withdrawDischarge(a);
         assertThat(value("SELECT status FROM admission WHERE id=?",a)).isEqualTo("IN_HOSPITAL");
         admissions.requestDischarge(a);
-        var settled=finance.settle(a);
+        var settled=finance.settle(a,"CARD");
         assertThat((BigDecimal)settled.get("refund_amount")).isEqualByComparingTo("980");
         assertThat(money("SELECT deposit_balance FROM v_admission_deposit_balance WHERE admission_id=?",a)).isEqualByComparingTo("20");
         assertThat(money("SELECT available_balance FROM v_admission_deposit_balance WHERE admission_id=?",a)).isEqualByComparingTo("0");
+        assertThat(value("SELECT payment_method FROM deposit_transaction WHERE admission_id=? AND transaction_type='REFUND'",a)).isEqualTo("CARD");
         assertThat(value("SELECT status FROM bed WHERE id=?",bedId)).isEqualTo("AVAILABLE");
         assertThat(number("SELECT COUNT(*) FROM bed_usage WHERE admission_id=? AND end_time IS NULL",a)).isZero();
         long initial=number("SELECT id FROM deposit_transaction WHERE admission_id=? AND transaction_type='INITIAL'",a);
@@ -553,7 +552,7 @@ class DatabaseIntegrationTest {
         rejects(() -> patients.detail(p));
         rejects(() -> finance.precheck(a));
         rejects(() -> typedOrders.history(a));
-        assertThat(admissions.list("ALL",null,null,1,20).total()).isZero();
+        assertThat(admissions.list("ALL",null,null,null,false,1,20).total()).isZero();
         asAdmin();
         assertThat(admissions.detail(a)).containsEntry("id",a);
     }
@@ -607,7 +606,8 @@ class DatabaseIntegrationTest {
         String token=(String)auth.login(username,"Verify-Only-123!").get("token");
         mvc.perform(get("/api/admissions/"+a).header("Authorization","Bearer "+token)).andExpect(status().isOk());
         mvc.perform(get("/api/orders/tasks").param("phase","DISPENSE").param("itemType","DRUG").header("Authorization","Bearer "+token))
-            .andExpect(status().isOk()).andExpect(jsonPath("$.data.length()").value(0));
+            .andExpect(status().isOk()).andExpect(jsonPath("$.data.items.length()").value(0))
+            .andExpect(jsonPath("$.data.total").value(0));
         mvc.perform(post("/api/orders/executions").header("Authorization","Bearer "+token).contentType("application/json")
             .content("{\"requestNo\":\""+UUID.randomUUID()+"\",\"orderItemId\":"+item(o,drugId)+",\"phase\":\"DISPENSE\",\"notDone\":false}"))
             .andExpect(status().isForbidden());
@@ -645,6 +645,57 @@ class DatabaseIntegrationTest {
         var drugs=statistics.drugUsage(LocalDate.now(java.time.ZoneOffset.UTC),LocalDate.now(java.time.ZoneOffset.UTC),10000);
         var drug=drugs.stream().filter(x -> ((Number)x.get("medical_item_id")).longValue()==drugId).findFirst().orElseThrow();
         assertThat((BigDecimal)drug.get("used_quantity")).isEqualByComparingTo("0");
+    }
+
+    @Test void inventoryInboundAdjustmentThresholdAndHistoryStayReconciled() {
+        jdbcTemplate.update("UPDATE medical_item SET stock_quantity=0,low_stock_threshold=NULL WHERE id=?",drugId);
+        var inbound=inventory.inbound(drugId,new BigDecimal("12"),"采购入库 TEST-001");
+        assertThat((BigDecimal)inbound.get("stockQuantity")).isEqualByComparingTo("12");
+        inventory.setThreshold(drugId,new BigDecimal("10"));
+        assertThat(inventory.items(null).stream().filter(row -> id(row)==drugId).findFirst().orElseThrow())
+            .containsEntry("stock_status","NORMAL");
+
+        var adjustment=inventory.adjust(drugId,new BigDecimal("8"),"盘点少4盒");
+        assertThat((BigDecimal)adjustment.get("stockQuantity")).isEqualByComparingTo("8");
+        assertThat(inventory.items(null).stream().filter(row -> id(row)==drugId).findFirst().orElseThrow())
+            .containsEntry("stock_status","LOW");
+        var history=inventory.transactions(drugId,1,20);
+        assertThat(history.total()).isEqualTo(2);
+        assertThat(history.items()).extracting(row -> row.get("transaction_type"))
+            .containsExactly("ADJUSTMENT","INBOUND");
+        assertThat(number("SELECT COUNT(*) FROM drug_inventory_transaction WHERE medical_item_id=? AND after_quantity<>before_quantity+quantity",drugId)).isZero();
+        rejects(() -> inventory.adjust(drugId,new BigDecimal("8"),"无变化"));
+        rejects(() -> inventory.inbound(drugId,new BigDecimal("1.5"),"整数药品不允许小数"));
+        assertThat(money("SELECT stock_quantity FROM medical_item WHERE id=?",drugId)).isEqualByComparingTo("8");
+    }
+
+    @Test void inpatientStatisticsExposeCurrentTrendAndLengthOfStayViews() {
+        long admissionId=admission();
+        var today=LocalDate.now(java.time.ZoneOffset.UTC);
+        var current=statistics.currentOperations(14);
+        assertThat(((Number)current.get("current_inpatients")).longValue()).isPositive();
+        assertThat(current).containsKeys("available_beds","pending_discharge_count","long_stay_count","overdue_patient_count");
+        var trend=statistics.admissionTrend(today.minusDays(2),today);
+        assertThat(trend).hasSize(3).allSatisfy(row -> assertThat(row).containsKeys("stat_date","admitted_count","discharged_count","inpatient_census"));
+        assertThat(statistics.lengthOfStayAndDebt(today.minusMonths(6),today))
+            .containsKeys("average_length_of_stay","median_length_of_stay","p90_length_of_stay","discharged_sample_size");
+        assertThat(statistics.lengthOfStayDistribution(today.minusMonths(6),today)).isNotNull();
+        jdbcTemplate.update("UPDATE admission SET admission_time=DATE_SUB(UTC_TIMESTAMP(3),INTERVAL 20 DAY) WHERE id=?",admissionId);
+        assertThat(admissions.list(null,null,null,14,false,1,20).items())
+            .extracting(row -> ((Number)row.get("admission_id")).longValue()).contains(admissionId);
+        assertThat(admissions.list("PENDING_DISCHARGE",null,null,null,true,1,20).items())
+            .allSatisfy(row -> assertThat(row.get("status")).isEqualTo("PENDING_DISCHARGE"));
+
+        context(new CurrentUser(adminId,"scoped-doctor",List.of("DOCTOR"),doctorId,departmentId));
+        assertThat(((Number)statistics.currentOperations(14).get("current_inpatients")).longValue()).isPositive();
+        context(new CurrentUser(adminId,"other-doctor",List.of("DOCTOR"),-1L,departmentId));
+        assertThat(((Number)statistics.currentOperations(14).get("current_inpatients")).longValue()).isZero();
+        context(new CurrentUser(adminId,"other-ward",List.of("NURSE"),-1L,departmentId+999999));
+        assertThat(statistics.bedUtilization()).isEmpty();
+        assertThat(statistics.departmentCensus(today.minusDays(2),today)).isEmpty();
+        assertThat(statistics.admissionTrend(today.minusDays(2),today))
+            .allSatisfy(row -> assertThat(((Number)row.get("inpatient_census")).longValue()).isZero());
+        asAdmin();
     }
     List<Boolean> race(Runnable first,Runnable second) throws Exception {
         var pool=Executors.newFixedThreadPool(2);

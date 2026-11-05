@@ -37,13 +37,14 @@ class AdmissionServiceTest {
     void admissionProcedureResultIsReturned() {
         doAnswer(invocation -> {
             @SuppressWarnings("unchecked") Map<String, Object> parameters = invocation.getArgument(0);
+            assertThat(parameters).containsEntry("paymentMethod", "CARD");
             parameters.put("admissionId", 88L);
             return null;
         }).when(mapper).callAdmit(any());
         when(mapper.findAdmission(88)).thenReturn(Map.of("id", 88L, "status", "IN_HOSPITAL"));
         when(mapper.bedHistory(88)).thenReturn(List.of());
 
-        var result = service.admit(new Requests.AdmissionCreate(1L, 2L, 3L, 4L, new BigDecimal("3000")));
+        var result = service.admit(new Requests.AdmissionCreate(1L, 2L, 3L, 4L, new BigDecimal("3000"), "CARD"));
 
         assertThat(result).containsEntry("id", 88L).containsEntry("status", "IN_HOSPITAL");
     }

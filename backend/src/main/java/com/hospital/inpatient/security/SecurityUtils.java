@@ -15,6 +15,11 @@ public final class SecurityUtils {
         var user = currentUser();
         return !unrestricted() && doctorScope()==null && user.roles().contains("NURSE") ? (user.departmentId()==null ? -1L : user.departmentId()) : null;
     }
+    public static Long statisticsDepartmentScope() {
+        var user = currentUser();
+        return !unrestricted() && user.roles().stream().anyMatch(java.util.Set.of("DOCTOR","NURSE")::contains)
+                ? (user.departmentId()==null ? -1L : user.departmentId()) : null;
+    }
     private SecurityUtils() {
     }
 

@@ -1,22 +1,81 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.hospital.inpatient.mapper.StatisticsMapper">
+    <sql id="statisticsAdmissionScope">
+        <bind name="scopeDoctor" value="@com.hospital.inpatient.security.SecurityUtils@doctorScope()" />
+        <bind name="scopeDepartment" value="@com.hospital.inpatient.security.SecurityUtils@statisticsDepartmentScope()" />
+        <if test="scopeDoctor != null">AND a.attending_doctor_id=#{scopeDoctor}</if>
+        <if test="scopeDepartment != null">AND a.department_id=#{scopeDepartment}</if>
+    </sql>
+    <select id="currentOperations" resultType="map">
+        WITH scoped_admissions AS (
+          SELECT a.* FROM admission a WHERE 1=1 <include refid="statisticsAdmissionScope" />
+        )
+        SELECT
+          COUNT(CASE WHEN a.status IN ('IN_HOSPITAL','PENDING_DISCHARGE') THEN 1 END) current_inpatients,
+          COUNT(CASE WHEN a.status='PENDING_DISCHARGE' THEN 1 END) pending_discharge_count,
+          COUNT(CASE WHEN a.status IN ('IN_HOSPITAL','PENDING_DISCHARGE')
+                      AND TIMESTAMPDIFF(DAY,a.admission_time,UTC_TIMESTAMP(3)) &gt;= #{longStayDays} THEN 1 END) long_stay_count,
+          #{longStayDays} long_stay_days,
+          (SELECT COUNT(*) FROM bed b JOIN room r ON r.id=b.room_id JOIN ward w ON w.id=r.ward_id JOIN department d ON d.id=w.department_id
+            WHERE b.active=TRUE AND r.active=TRUE AND w.active=TRUE AND d.active=TRUE AND b.status='AVAILABLE'
+            <if test="scopeDepartment != null">AND d.id=#{scopeDepartment}</if>) available_beds,
+          (SELECT COUNT(*) FROM bed b JOIN room r ON r.id=b.room_id JOIN ward w ON w.id=r.ward_id JOIN department d ON d.id=w.department_id
+            WHERE b.active=TRUE AND r.active=TRUE AND w.active=TRUE AND d.active=TRUE AND b.status='OCCUPIED'
+            <if test="scopeDepartment != null">AND d.id=#{scopeDepartment}</if>) occupied_beds,
+          (SELECT COUNT(*) FROM bed b JOIN room r ON r.id=b.room_id JOIN ward w ON w.id=r.ward_id JOIN department d ON d.id=w.department_id
+            WHERE b.active=TRUE AND r.active=TRUE AND w.active=TRUE AND d.active=TRUE AND b.status='MAINTENANCE'
+            <if test="scopeDepartment != null">AND d.id=#{scopeDepartment}</if>) maintenance_beds,
+          (SELECT COUNT(*) FROM v_overdue_accounts voa JOIN scoped_admissions sa ON sa.id=voa.admission_id) overdue_patient_count,
+          (SELECT COALESCE(SUM(-voa.available_balance),0) FROM v_overdue_accounts voa JOIN scoped_admissions sa ON sa.id=voa.admission_id) overdue_amount,
+          COUNT(CASE WHEN a.status='PENDING_DISCHARGE' AND (
+              EXISTS(SELECT 1 FROM medical_order mo WHERE mo.admission_id=a.id AND mo.status IN ('DRAFT','SUBMITTED','IN_PROGRESS'))
+              OR EXISTS(SELECT 1 FROM v_admission_deposit_balance db WHERE db.admission_id=a.id AND db.available_balance&lt;0)
+          ) THEN 1 END) blocked_discharge_count
+        FROM scoped_admissions a
+    </select>
+    <select id="admissionTrend" resultType="map">
+        WITH RECURSIVE scoped_admissions AS (
+          SELECT a.* FROM admission a WHERE 1=1 <include refid="statisticsAdmissionScope" />
+        ), dates AS (
+          SELECT CAST(#{from} AS DATE) stat_date
+          UNION ALL
+          SELECT DATE_ADD(stat_date,INTERVAL 1 DAY) FROM dates WHERE stat_date &lt; #{to}
+        )
+        SELECT dates.stat_date,
+          (SELECT COUNT(*) FROM scoped_admissions a WHERE a.status&lt;>'CANCELLED'
+             AND a.admission_time &gt;= dates.stat_date AND a.admission_time &lt; DATE_ADD(dates.stat_date,INTERVAL 1 DAY)) admitted_count,
+          (SELECT COUNT(*) FROM scoped_admissions a WHERE a.status='DISCHARGED'
+             AND a.discharge_time &gt;= dates.stat_date AND a.discharge_time &lt; DATE_ADD(dates.stat_date,INTERVAL 1 DAY)) discharged_count,
+          (SELECT COUNT(*) FROM scoped_admissions a WHERE a.status&lt;>'CANCELLED'
+             AND a.admission_time &lt; DATE_ADD(dates.stat_date,INTERVAL 1 DAY)
+             AND (a.discharge_time IS NULL OR a.discharge_time &gt;= DATE_ADD(dates.stat_date,INTERVAL 1 DAY))) inpatient_census
+        FROM dates ORDER BY dates.stat_date
+    </select>
     <select id="departmentCensus" resultType="map">
+        WITH scoped_admissions AS (
+          SELECT a.* FROM admission a WHERE 1=1 <include refid="statisticsAdmissionScope" />
+        )
         SELECT d.id department_id, d.name department_name,
-               SUM(a.status IN ('IN_HOSPITAL','PENDING_DISCHARGE')) current_inpatients,
-               SUM(DATE(a.admission_time) BETWEEN #{from} AND #{to}) admitted_count,
-               SUM(a.status='DISCHARGED' AND DATE(a.discharge_time) BETWEEN #{from} AND #{to}) discharged_count
-        FROM department d LEFT JOIN admission a ON a.department_id=d.id
+               COALESCE(SUM(a.status IN ('IN_HOSPITAL','PENDING_DISCHARGE')),0) current_inpatients,
+               COALESCE(SUM(a.status&lt;>'CANCELLED' AND DATE(a.admission_time) BETWEEN #{from} AND #{to}),0) admitted_count,
+               COALESCE(SUM(a.status='DISCHARGED' AND DATE(a.discharge_time) BETWEEN #{from} AND #{to}),0) discharged_count
+        FROM department d LEFT JOIN scoped_admissions a ON a.department_id=d.id
+        <where><if test="scopeDepartment != null">d.id=#{scopeDepartment}</if></where>
         GROUP BY d.id,d.name ORDER BY d.code
     </select>
     <select id="bedUtilization" resultType="map">
+        <bind name="scopeDepartment" value="@com.hospital.inpatient.security.SecurityUtils@statisticsDepartmentScope()" />
         SELECT w.id ward_id, w.name ward_name, d.name department_name,
                COUNT(b.id) total_beds,
                SUM(b.status='OCCUPIED') occupied_beds,
                SUM(b.status='AVAILABLE') available_beds,
+               SUM(b.status='MAINTENANCE') maintenance_beds,
+               SUM(b.status='DISABLED') disabled_beds,
                ROUND(SUM(b.status='OCCUPIED') / NULLIF(SUM(b.status IN ('OCCUPIED','AVAILABLE')),0) * 100, 2) utilization_rate
         FROM ward w JOIN department d ON d.id=w.department_id JOIN room r ON r.ward_id=w.id JOIN bed b ON b.room_id=r.id
         WHERE b.active=TRUE AND r.active=TRUE AND w.active=TRUE AND d.active=TRUE
+        <if test="scopeDepartment != null">AND d.id=#{scopeDepartment}</if>
         GROUP BY w.id,w.name,d.name ORDER BY d.name,w.name
     </select>
     <select id="revenueComposition" resultType="map">
@@ -38,13 +97,41 @@
         ORDER BY used_quantity DESC LIMIT #{limit}
     </select>
     <select id="lengthOfStayAndDebt" resultType="map">
+        WITH scoped_admissions AS (
+          SELECT a.* FROM admission a WHERE 1=1 <include refid="statisticsAdmissionScope" />
+        ), completed AS (
+          SELECT TIMESTAMPDIFF(HOUR,a.admission_time,a.discharge_time)/24 los_days
+          FROM scoped_admissions a
+          WHERE a.status='DISCHARGED' AND a.discharge_time &gt;= #{from} AND a.discharge_time &lt; DATE_ADD(#{to},INTERVAL 1 DAY)
+        ), ranked AS (
+          SELECT los_days, ROW_NUMBER() OVER(ORDER BY los_days) rn, COUNT(*) OVER() sample_size FROM completed
+        )
         SELECT
-          ROUND(AVG(CASE WHEN a.status='DISCHARGED'
-                         THEN TIMESTAMPDIFF(HOUR,a.admission_time,a.discharge_time)/24 END),2) average_length_of_stay,
-          (SELECT COUNT(*) FROM v_overdue_accounts) overdue_patient_count,
-          (SELECT COALESCE(SUM(-available_balance),0) FROM v_overdue_accounts) overdue_amount,
-          COUNT(CASE WHEN a.status='DISCHARGED' THEN 1 END) discharged_sample_size
-        FROM admission a
-        WHERE DATE(a.admission_time) BETWEEN #{from} AND #{to}
+          ROUND(AVG(los_days),2) average_length_of_stay,
+          ROUND(AVG(CASE WHEN rn IN (FLOOR((sample_size+1)/2),FLOOR((sample_size+2)/2)) THEN los_days END),2) median_length_of_stay,
+          ROUND(MAX(CASE WHEN rn=CEIL(sample_size*0.90) THEN los_days END),2) p90_length_of_stay,
+          (SELECT COUNT(*) FROM v_overdue_accounts voa JOIN scoped_admissions sa ON sa.id=voa.admission_id) overdue_patient_count,
+          (SELECT COALESCE(SUM(-voa.available_balance),0) FROM v_overdue_accounts voa JOIN scoped_admissions sa ON sa.id=voa.admission_id) overdue_amount,
+          COUNT(*) discharged_sample_size
+        FROM ranked
+    </select>
+    <select id="lengthOfStayDistribution" resultType="map">
+        WITH scoped_admissions AS (
+          SELECT a.* FROM admission a WHERE 1=1 <include refid="statisticsAdmissionScope" />
+        )
+        SELECT CASE
+            WHEN los_days &lt;= 3 THEN '0-3天'
+            WHEN los_days &lt;= 7 THEN '4-7天'
+            WHEN los_days &lt;= 14 THEN '8-14天'
+            WHEN los_days &lt;= 30 THEN '15-30天'
+            ELSE '30天以上' END stay_bucket,
+          COUNT(*) patient_count
+        FROM (
+          SELECT TIMESTAMPDIFF(HOUR,a.admission_time,a.discharge_time)/24 los_days
+          FROM scoped_admissions a
+          WHERE a.status='DISCHARGED' AND a.discharge_time &gt;= #{from} AND a.discharge_time &lt; DATE_ADD(#{to},INTERVAL 1 DAY)
+        ) completed
+        GROUP BY stay_bucket
+        ORDER BY FIELD(stay_bucket,'0-3天','4-7天','8-14天','15-30天','30天以上')
     </select>
 </mapper>

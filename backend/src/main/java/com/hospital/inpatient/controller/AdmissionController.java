@@ -21,9 +21,11 @@ public class AdmissionController {
     public ApiResponse<?> list(@RequestParam(required = false) String status,
                                @RequestParam(required = false) Long departmentId,
                                @RequestParam(required = false) String keyword,
+                               @RequestParam(required = false) Integer longStayDays,
+                               @RequestParam(required = false) Boolean settlementBlocked,
                                @RequestParam(defaultValue = "1") int page,
                                @RequestParam(defaultValue = "20") int size) {
-        return ApiResponse.success(service.list(status, departmentId, keyword, page, size));
+        return ApiResponse.success(service.list(status, departmentId, keyword, longStayDays, settlementBlocked, page, size));
     }
 
     @GetMapping("/{id}")

@@ -44,6 +44,7 @@
     <select id="callSettlement" statementType="CALLABLE" parameterType="map">
         {CALL sp_discharge_settlement(
             #{admissionId, mode=IN, jdbcType=BIGINT},
+            #{paymentMethod, mode=IN, jdbcType=VARCHAR},
             #{operatorId, mode=IN, jdbcType=BIGINT},
             #{settlementId, mode=OUT, jdbcType=BIGINT}
         )}
@@ -55,7 +56,13 @@
         WHERE s.admission_id=#{admissionId}
     </select>
     <select id="settlementDetails" resultType="map">
-        SELECT * FROM settlement_detail WHERE settlement_id=#{settlementId} ORDER BY category
+        SELECT mi.item_type category, SUM(c.amount) amount, COUNT(*) item_count
+        FROM settlement s
+        JOIN charge_detail c ON c.admission_id=s.admission_id
+        JOIN medical_item mi ON mi.id=c.medical_item_id
+        WHERE s.id=#{settlementId}
+        GROUP BY mi.item_type
+        ORDER BY mi.item_type
     </select>
     <select id="alerts" resultType="map">
         SELECT aa.*, a.admission_no, p.patient_no, p.name patient_name, d.name department_name

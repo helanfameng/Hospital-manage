@@ -97,3 +97,21 @@ FROM charge_detail c
 JOIN department d ON d.id = c.department_id
 JOIN medical_item mi ON mi.id = c.medical_item_id
 GROUP BY d.id, d.name, DATE(c.charged_at), mi.item_type;
+
+-- Dispensing is recorded in stock units and administration in dose units.
+-- This is the reconciliation source for medication remaining quantities.
+CREATE OR REPLACE VIEW v_order_item_medication_balance AS
+SELECT
+    oi.id AS order_item_id,
+    oi.medical_order_id,
+    oi.medical_item_id,
+    oi.unit_snapshot AS stock_unit,
+    oi.dose_unit,
+    oi.dose_units_per_stock,
+    oi.dispensed_quantity,
+    oi.executed_quantity AS administered_dose_quantity,
+    oi.dispensed_quantity * oi.dose_units_per_stock AS dispensed_dose_quantity,
+    GREATEST(oi.dispensed_quantity * oi.dose_units_per_stock - oi.executed_quantity, 0) AS remaining_dose_quantity,
+    GREATEST(oi.dispensed_quantity - oi.executed_quantity / oi.dose_units_per_stock, 0) AS remaining_stock_quantity
+FROM order_item oi
+WHERE oi.item_type_snapshot = 'DRUG';

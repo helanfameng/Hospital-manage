@@ -70,6 +70,11 @@
             </choose>
             <if test="departmentId != null">AND a.department_id=#{departmentId}</if>
             <if test="keyword != null and keyword != ''">AND (p.name LIKE CONCAT('%',#{keyword},'%') OR p.patient_no LIKE CONCAT('%',#{keyword},'%') OR a.admission_no LIKE CONCAT('%',#{keyword},'%'))</if>
+            <if test="longStayDays != null">AND a.status IN ('IN_HOSPITAL','PENDING_DISCHARGE') AND TIMESTAMPDIFF(DAY,a.admission_time,UTC_TIMESTAMP(3)) &gt;= #{longStayDays}</if>
+            <if test="settlementBlocked">AND a.status='PENDING_DISCHARGE' AND (
+                EXISTS(SELECT 1 FROM medical_order mo WHERE mo.admission_id=a.id AND mo.status IN ('DRAFT','SUBMITTED','IN_PROGRESS'))
+                OR EXISTS(SELECT 1 FROM v_admission_deposit_balance db WHERE db.admission_id=a.id AND db.available_balance&lt;0)
+            )</if>
         </where>
         ORDER BY a.admission_time DESC,a.id DESC LIMIT #{size} OFFSET #{offset}
     </select>
@@ -83,6 +88,11 @@
             </choose>
             <if test="departmentId != null">AND a.department_id=#{departmentId}</if>
             <if test="keyword != null and keyword != ''">AND (p.name LIKE CONCAT('%',#{keyword},'%') OR p.patient_no LIKE CONCAT('%',#{keyword},'%') OR a.admission_no LIKE CONCAT('%',#{keyword},'%'))</if>
+            <if test="longStayDays != null">AND a.status IN ('IN_HOSPITAL','PENDING_DISCHARGE') AND TIMESTAMPDIFF(DAY,a.admission_time,UTC_TIMESTAMP(3)) &gt;= #{longStayDays}</if>
+            <if test="settlementBlocked">AND a.status='PENDING_DISCHARGE' AND (
+                EXISTS(SELECT 1 FROM medical_order mo WHERE mo.admission_id=a.id AND mo.status IN ('DRAFT','SUBMITTED','IN_PROGRESS'))
+                OR EXISTS(SELECT 1 FROM v_admission_deposit_balance db WHERE db.admission_id=a.id AND db.available_balance&lt;0)
+            )</if>
         </where></select>
     <select id="findAdmission" resultType="map">
         SELECT a.*, p.patient_no, p.name patient_name, p.gender, p.birth_date,
@@ -168,6 +178,7 @@
             #{doctorId, mode=IN, jdbcType=BIGINT},
             #{bedId, mode=IN, jdbcType=BIGINT},
             #{initialDeposit, mode=IN, jdbcType=DECIMAL},
+            #{paymentMethod, mode=IN, jdbcType=VARCHAR},
             #{operatorId, mode=IN, jdbcType=BIGINT},
             #{admissionId, mode=OUT, jdbcType=BIGINT}
         )}

@@ -6,6 +6,7 @@ import com.hospital.inpatient.common.TraceIds;
 import com.hospital.inpatient.mapper.AuditMapper;
 import com.hospital.inpatient.security.SecurityUtils;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
 import java.util.HashMap;
@@ -14,12 +15,12 @@ import java.util.HashMap;
 public class AuditService {
     private final AuditMapper auditMapper;
     private final ObjectMapper objectMapper;
-    private final HttpServletRequest request;
+    private final ObjectProvider<HttpServletRequest> requests;
 
-    public AuditService(AuditMapper auditMapper, ObjectMapper objectMapper, HttpServletRequest request) {
+    public AuditService(AuditMapper auditMapper, ObjectMapper objectMapper, ObjectProvider<HttpServletRequest> requests) {
         this.auditMapper = auditMapper;
         this.objectMapper = objectMapper;
-        this.request = request;
+        this.requests = requests;
     }
 
     public void success(String action, String objectType, Object objectId, Object before, Object after) {
@@ -28,7 +29,9 @@ public class AuditService {
 
     @org.springframework.transaction.annotation.Transactional(propagation=org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     public void failure(String code) {
-        record("REQUEST_FAILED", "request", null, null, java.util.Map.of("path",request.getRequestURI(),"code",code), "FAILURE");
+        var request = requests.getIfAvailable();
+        record("REQUEST_FAILED", "request", null, null,
+                java.util.Map.of("path",request == null ? "maintenance" : request.getRequestURI(),"code",code), "FAILURE");
     }
 
     private void record(String action, String objectType, Object objectId, Object before, Object after, String result) {
@@ -43,7 +46,8 @@ public class AuditService {
         values.put("result", result);
         values.put("beforeValue", json(before));
         values.put("afterValue", json(after));
-        values.put("ipAddress", request.getRemoteAddr());
+        var request = requests.getIfAvailable();
+        values.put("ipAddress", request == null ? null : request.getRemoteAddr());
         values.put("traceId", TraceIds.current());
         auditMapper.insert(values);
     }

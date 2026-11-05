@@ -260,29 +260,16 @@ CREATE TABLE medical_order (
     CONSTRAINT fk_order_prescriber FOREIGN KEY (prescribed_by) REFERENCES staff(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
--- A compounding group shares one route, one type and one schedule across its drugs.
-CREATE TABLE order_group (
-    id BIGINT PRIMARY KEY AUTO_INCREMENT,
-    medical_order_id BIGINT NOT NULL,
-    name VARCHAR(100) NOT NULL,
-    route VARCHAR(64) NOT NULL,
-    order_type VARCHAR(20) NOT NULL,
-    start_time TIMESTAMP(3) NOT NULL,
-    end_time TIMESTAMP(3),
-    CONSTRAINT fk_order_group_order FOREIGN KEY (medical_order_id) REFERENCES medical_order(id),
-    CONSTRAINT ck_order_group_type CHECK (order_type IN ('TEMPORARY','LONG_TERM')),
-    CONSTRAINT ck_order_group_dates CHECK (end_time IS NULL OR end_time >= start_time)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
--- Snapshots freeze the catalog wording and price at prescribing time.
--- dispensed_quantity counts stock units; administered_quantity counts dose units.
+-- Snapshots freeze the catalog wording and price at prescribing time. Medication orders
+-- describe the prescribed dose and timing; actual dispense/administer quantities belong
+-- to execution_record.
 CREATE TABLE order_item (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     medical_order_id BIGINT NOT NULL,
     medical_item_id BIGINT NOT NULL,
-    group_id BIGINT,
-    dosage DECIMAL(12,3),
-    quantity_per_execution DECIMAL(12,3) NOT NULL,
+    dose_per_administration DECIMAL(12,3),
+    requested_dispense_quantity DECIMAL(12,3),
+    execution_quantity_per_operation DECIMAL(12,3),
     route VARCHAR(64),
     instructions VARCHAR(255),
     item_name_snapshot VARCHAR(120),
@@ -296,47 +283,92 @@ CREATE TABLE order_item (
     execution_role VARCHAR(20),
     order_type VARCHAR(20),
     item_status VARCHAR(20) NOT NULL DEFAULT 'DRAFT',
-    start_time TIMESTAMP(3),
-    end_time TIMESTAMP(3),
-    planned_administration_count INT,
-    excess_dispense_reason VARCHAR(255),
+    administration_mode VARCHAR(20),
+    administration_interval_minutes INT,
+    max_administrations_per_day INT,
+    effective_start_time TIMESTAMP(3) NOT NULL,
+    effective_end_time TIMESTAMP(3),
     dispensed_quantity DECIMAL(12,3) NOT NULL DEFAULT 0,
-    administered_quantity DECIMAL(12,3) NOT NULL DEFAULT 0,
     executed_quantity DECIMAL(12,3) NOT NULL DEFAULT 0,
-    CONSTRAINT ck_order_item_dosage CHECK (dosage IS NULL OR dosage > 0),
-    CONSTRAINT ck_order_item_quantity CHECK (quantity_per_execution > 0 AND executed_quantity >= 0),
-    CONSTRAINT ck_order_item_type CHECK (order_type IS NULL OR order_type IN ('TEMPORARY','LONG_TERM')),
+    CONSTRAINT ck_order_item_dose CHECK (dose_per_administration IS NULL OR dose_per_administration > 0),
+    CONSTRAINT ck_order_item_dispense_request CHECK (requested_dispense_quantity IS NULL OR requested_dispense_quantity > 0),
+    CONSTRAINT ck_order_item_execution_quantity CHECK (execution_quantity_per_operation IS NULL OR execution_quantity_per_operation > 0),
+    CONSTRAINT ck_order_item_type CHECK (order_type IN ('TEMPORARY','LONG_TERM')),
     CONSTRAINT ck_order_item_status CHECK (item_status IN ('DRAFT','SUBMITTED','IN_PROGRESS','COMPLETED','STOPPED','CANCELLED')),
-    CONSTRAINT ck_order_item_dates CHECK (end_time IS NULL OR start_time IS NULL OR end_time >= start_time),
-    CONSTRAINT ck_order_item_balances CHECK (dispensed_quantity >= 0 AND administered_quantity >= 0),
-    CONSTRAINT ck_order_item_administration_plan
-        CHECK (planned_administration_count IS NULL OR planned_administration_count BETWEEN 1 AND 1000),
+    CONSTRAINT ck_order_item_dates CHECK (effective_end_time IS NULL OR effective_end_time > effective_start_time),
+    CONSTRAINT ck_order_item_balances CHECK (dispensed_quantity >= 0 AND executed_quantity >= 0),
+    CONSTRAINT ck_order_item_administration_mode CHECK (administration_mode IS NULL OR administration_mode IN ('ONCE','SCHEDULED','PRN')),
+    CONSTRAINT ck_order_item_medication_shape CHECK (
+        (item_type_snapshot = 'DRUG'
+            AND dose_per_administration IS NOT NULL AND dose_unit IS NOT NULL AND dose_units_per_stock > 0
+            AND route IS NOT NULL AND administration_mode IS NOT NULL
+            AND execution_quantity_per_operation IS NULL)
+        OR
+        (item_type_snapshot <> 'DRUG'
+            AND dose_per_administration IS NULL AND dose_unit IS NULL AND dose_units_per_stock IS NULL
+            AND route IS NULL AND administration_mode IS NULL
+            AND requested_dispense_quantity IS NULL AND execution_quantity_per_operation IS NOT NULL)
+    ),
+    CONSTRAINT ck_order_item_medication_timing CHECK (
+        item_type_snapshot <> 'DRUG'
+        OR (order_type = 'TEMPORARY' AND administration_mode = 'ONCE'
+            AND administration_interval_minutes IS NULL AND max_administrations_per_day IS NULL)
+        OR (order_type = 'LONG_TERM' AND administration_mode = 'SCHEDULED'
+            AND administration_interval_minutes > 0 AND max_administrations_per_day IS NULL)
+        OR (order_type = 'LONG_TERM' AND administration_mode = 'PRN'
+            AND administration_interval_minutes > 0 AND max_administrations_per_day > 0)
+    ),
     CONSTRAINT fk_order_item_order FOREIGN KEY (medical_order_id) REFERENCES medical_order(id),
-    CONSTRAINT fk_order_item_catalog FOREIGN KEY (medical_item_id) REFERENCES medical_item(id),
-    CONSTRAINT fk_order_item_group FOREIGN KEY (group_id) REFERENCES order_group(id)
+    CONSTRAINT fk_order_item_catalog FOREIGN KEY (medical_item_id) REFERENCES medical_item(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
--- Dispensing, administration and non-drug work are separate, individually reversible facts.
--- batch_key ties one compounding group's executions together.
+-- A medication schedule is one concrete administration opportunity. ONCE creates one row;
+-- SCHEDULED and PRN orders create the next row incrementally after each terminal outcome.
+CREATE TABLE medication_schedule (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    order_item_id BIGINT NOT NULL,
+    scheduled_at TIMESTAMP(3) NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    completed_at TIMESTAMP(3),
+    not_done_reason VARCHAR(255),
+    deferred_until TIMESTAMP(3),
+    version INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    CONSTRAINT uk_medication_schedule UNIQUE (order_item_id, scheduled_at),
+    CONSTRAINT ck_medication_schedule_status CHECK (status IN ('PENDING','ADMINISTERED','NOT_DONE','DEFERRED','CANCELLED')),
+    CONSTRAINT ck_medication_schedule_result CHECK (
+        (status <> 'NOT_DONE' OR not_done_reason IS NOT NULL)
+        AND (status <> 'DEFERRED' OR deferred_until IS NOT NULL)
+    ),
+    CONSTRAINT fk_medication_schedule_item FOREIGN KEY (order_item_id) REFERENCES order_item(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- Dispensing, administration, returns, waste and non-drug work are separate,
+-- individually reversible facts. quantity is always the actual recorded quantity.
 CREATE TABLE execution_record (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     request_no VARCHAR(64) NOT NULL,
     order_item_id BIGINT NOT NULL,
+    schedule_id BIGINT,
     execution_time TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     quantity DECIMAL(12,3) NOT NULL,
     status VARCHAR(20) NOT NULL,
     result_note VARCHAR(500),
+    quantity_variance_reason VARCHAR(255),
     executor_id BIGINT NOT NULL,
     reversed_execution_id BIGINT,
     phase VARCHAR(20) NOT NULL DEFAULT 'PERFORM',
-    batch_key VARCHAR(64),
     unit_snapshot VARCHAR(20),
     CONSTRAINT uk_execution_request UNIQUE (request_no),
     CONSTRAINT uk_execution_reversal UNIQUE (reversed_execution_id),
     CONSTRAINT ck_execution_quantity CHECK (quantity >= 0),
     CONSTRAINT ck_execution_status CHECK (status IN ('SUCCESS','FAILED','REVERSED','NOT_DONE')),
-    CONSTRAINT ck_execution_phase CHECK (phase IN ('DISPENSE','ADMINISTER','PERFORM')),
+    CONSTRAINT ck_execution_phase CHECK (phase IN ('DISPENSE','ADMINISTER','PERFORM','RETURN','WASTE')),
+    CONSTRAINT ck_execution_schedule CHECK ((phase = 'ADMINISTER' AND schedule_id IS NOT NULL) OR phase <> 'ADMINISTER'),
+    CONSTRAINT ck_execution_not_done_reason CHECK (status <> 'NOT_DONE' OR result_note IS NOT NULL),
     CONSTRAINT fk_execution_order_item FOREIGN KEY (order_item_id) REFERENCES order_item(id),
+    CONSTRAINT fk_execution_schedule FOREIGN KEY (schedule_id) REFERENCES medication_schedule(id),
     CONSTRAINT fk_execution_executor FOREIGN KEY (executor_id) REFERENCES staff(id),
     CONSTRAINT fk_execution_reversed FOREIGN KEY (reversed_execution_id) REFERENCES execution_record(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
@@ -366,7 +398,7 @@ CREATE TABLE deposit_transaction (
     transaction_type VARCHAR(20) NOT NULL,
     amount DECIMAL(12,2) NOT NULL,
     original_transaction_id BIGINT,
-    payment_method VARCHAR(20),
+    payment_method VARCHAR(20) NOT NULL,
     note VARCHAR(255),
     request_no VARCHAR(64),
     operated_by BIGINT,
@@ -375,6 +407,7 @@ CREATE TABLE deposit_transaction (
     CONSTRAINT uk_deposit_reversal UNIQUE (original_transaction_id),
     CONSTRAINT uk_deposit_request UNIQUE (request_no),
     CONSTRAINT ck_deposit_type CHECK (transaction_type IN ('INITIAL','SUPPLEMENT','REFUND','REVERSAL')),
+    CONSTRAINT ck_deposit_payment_method CHECK (payment_method IN ('CASH','CARD','TRANSFER')),
     CONSTRAINT ck_deposit_amount CHECK (amount <> 0),
     CONSTRAINT fk_deposit_admission FOREIGN KEY (admission_id) REFERENCES admission(id),
     CONSTRAINT fk_deposit_original FOREIGN KEY (original_transaction_id) REFERENCES deposit_transaction(id),
@@ -430,16 +463,6 @@ CREATE TABLE settlement (
     CONSTRAINT fk_settlement_user FOREIGN KEY (settled_by) REFERENCES user_account(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-CREATE TABLE settlement_detail (
-    id BIGINT PRIMARY KEY AUTO_INCREMENT,
-    settlement_id BIGINT NOT NULL,
-    category VARCHAR(20) NOT NULL,
-    amount DECIMAL(12,2) NOT NULL,
-    item_count INT NOT NULL,
-    CONSTRAINT ck_settlement_detail_amount CHECK (amount >= 0 AND item_count >= 0),
-    CONSTRAINT fk_settlement_detail_settlement FOREIGN KEY (settlement_id) REFERENCES settlement(id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
 CREATE TABLE account_alert (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     admission_id BIGINT NOT NULL,
@@ -476,12 +499,6 @@ CREATE TABLE order_template_item (
     CONSTRAINT uk_order_template_item UNIQUE (template_id, medical_item_id),
     CONSTRAINT fk_order_template_item_template FOREIGN KEY (template_id) REFERENCES order_template(id),
     CONSTRAINT fk_order_template_item_catalog FOREIGN KEY (medical_item_id) REFERENCES medical_item(id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-
--- Charge numbers come from this sequence only. Gaps are intentional; never reset it.
-CREATE TABLE charge_number_sequence (
-    id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-    allocated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE audit_log (

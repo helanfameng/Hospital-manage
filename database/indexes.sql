@@ -8,6 +8,9 @@ CREATE INDEX idx_order_prescriber_time ON medical_order(prescribed_by, created_a
 CREATE INDEX idx_order_item_order ON order_item(medical_order_id);
 CREATE INDEX idx_execution_item_time ON execution_record(order_item_id, execution_time);
 CREATE INDEX idx_execution_phase ON execution_record(order_item_id, phase, status);
+CREATE INDEX idx_medication_schedule_pending ON medication_schedule(status, scheduled_at);
+CREATE INDEX idx_medication_schedule_item ON medication_schedule(order_item_id, status, scheduled_at);
+CREATE INDEX idx_execution_schedule ON execution_record(schedule_id, phase, status);
 CREATE INDEX idx_inventory_item_time ON drug_inventory_transaction(medical_item_id, created_at);
 CREATE INDEX idx_deposit_admission_time ON deposit_transaction(admission_id, transaction_time);
 CREATE INDEX idx_charge_admission_time ON charge_detail(admission_id, charged_at);

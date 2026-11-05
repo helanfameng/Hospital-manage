@@ -95,10 +95,16 @@ public class FinancialService {
 
     @Transactional
     public Map<String, Object> settle(long admissionId) {
+        return settle(admissionId, "CASH");
+    }
+
+    @Transactional
+    public Map<String, Object> settle(long admissionId, String paymentMethod) {
         guard.lockOpen(admissionId);
         var before = precheck(admissionId);
         var values = new HashMap<String, Object>();
         values.put("admissionId", admissionId);
+        values.put("paymentMethod", paymentMethod);
         values.put("operatorId", SecurityUtils.currentUser().id());
         try {
             mapper.callSettlement(values);

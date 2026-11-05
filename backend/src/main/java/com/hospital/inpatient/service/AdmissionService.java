@@ -25,12 +25,14 @@ public class AdmissionService {
         this.guard = guard;
     }
 
-    public PageResult<Map<String, Object>> list(String status, Long departmentId, String keyword, int page, int size) {
+    public PageResult<Map<String, Object>> list(String status, Long departmentId, String keyword,
+                                                Integer longStayDays, Boolean settlementBlocked, int page, int size) {
         int safeSize = Math.min(Math.max(size, 1), 100);
         int safePage = Math.max(page, 1);
+        Integer safeLongStayDays = longStayDays == null ? null : Math.min(Math.max(longStayDays, 1), 3650);
         return new PageResult<>(
-                mapper.listAdmissions(status, departmentId, keyword, (safePage - 1) * safeSize, safeSize),
-                mapper.countAdmissions(status, departmentId, keyword),
+                mapper.listAdmissions(status, departmentId, keyword, safeLongStayDays, Boolean.TRUE.equals(settlementBlocked), (safePage - 1) * safeSize, safeSize),
+                mapper.countAdmissions(status, departmentId, keyword, safeLongStayDays, Boolean.TRUE.equals(settlementBlocked)),
                 safePage,
                 safeSize
         );
@@ -55,6 +57,7 @@ public class AdmissionService {
         parameters.put("doctorId", request.doctorId());
         parameters.put("bedId", request.bedId());
         parameters.put("initialDeposit", request.initialDeposit());
+        parameters.put("paymentMethod", request.paymentMethod());
         parameters.put("operatorId", SecurityUtils.currentUser().id());
         try {
             mapper.callAdmit(parameters);

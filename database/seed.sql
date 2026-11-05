@@ -222,7 +222,7 @@ BEGIN
          ORDER BY b.id LIMIT 1;
         -- Patients 9 and 18 are deliberately underfunded to demonstrate the overdue alert.
         SET v_deposit = CASE WHEN i IN (9,18) THEN 60.00 ELSE 3000.00 END;
-        CALL sp_admit_patient(v_patient, v_department, v_doctor, v_bed, v_deposit, NULL, v_admission);
+        CALL sp_admit_patient(v_patient, v_department, v_doctor, v_bed, v_deposit, 'CASH', NULL, v_admission);
         SET i = i + 1;
     END WHILE;
 END$$
@@ -306,19 +306,19 @@ BEGIN
         SET v_order = LAST_INSERT_ID();
         UPDATE medical_order SET order_no=CONCAT(DATE_FORMAT(DATE_ADD(created_at,INTERVAL 8 HOUR),'%Y%m%d'),LPAD(v_order,8,'0'))
           WHERE id=v_order;
-        INSERT INTO order_item(medical_order_id,medical_item_id,quantity_per_execution,instructions,
+        INSERT INTO order_item(medical_order_id,medical_item_id,execution_quantity_per_operation,instructions,
             item_name_snapshot,item_type_snapshot,unit_snapshot,price_snapshot,billable,inventory_managed,
-            execution_role,order_type,item_status,start_time,executed_quantity)
+            execution_role,order_type,item_status,effective_start_time,executed_quantity)
           SELECT v_order,id,1,'入院后完成并回报结果',name,item_type,unit,unit_price,billable,inventory_managed,
                  execution_role,'TEMPORARY','COMPLETED',UTC_TIMESTAMP(3)-INTERVAL 2 DAY,1
             FROM medical_item WHERE id=v_item;
         SET v_line = LAST_INSERT_ID();
         INSERT INTO execution_record(request_no,order_item_id,execution_time,quantity,status,result_note,
-            executor_id,phase,unit_snapshot,batch_key)
+            executor_id,phase,unit_snapshot)
           VALUES(CONCAT('SEED-P-',LPAD(i,3,'0')),v_line,UTC_TIMESTAMP(3)-INTERVAL 2 DAY,1,'SUCCESS','项目已完成并回报',
-                 v_nurse,'PERFORM',v_unit,CONCAT('SEED-B-P-',LPAD(i,3,'0')));
+                 v_nurse,'PERFORM',v_unit);
         SET v_execution = LAST_INSERT_ID();
-        CALL sp_next_charge_number(FALSE, v_charge);
+        SET v_charge=CONCAT('C',SUBSTRING(REPLACE(UUID(),'-',''),1,30));
         INSERT INTO charge_detail(admission_id,execution_id,medical_item_id,department_id,charge_no,charge_type,
             unit_price_snapshot,quantity,amount,note,charged_at)
           VALUES(v_admission,v_execution,v_item,v_department,v_charge,'NORMAL',v_price,1,v_price,'项目执行计费',
@@ -331,20 +331,20 @@ BEGIN
         SET v_order = LAST_INSERT_ID();
         UPDATE medical_order SET order_no=CONCAT(DATE_FORMAT(DATE_ADD(created_at,INTERVAL 8 HOUR),'%Y%m%d'),LPAD(v_order,8,'0'))
           WHERE id=v_order;
-        INSERT INTO order_item(medical_order_id,medical_item_id,quantity_per_execution,instructions,
+        INSERT INTO order_item(medical_order_id,medical_item_id,execution_quantity_per_operation,instructions,
             item_name_snapshot,item_type_snapshot,unit_snapshot,price_snapshot,billable,inventory_managed,
-            execution_role,order_type,item_status,start_time,executed_quantity)
+            execution_role,order_type,item_status,effective_start_time,executed_quantity)
           SELECT v_order,id,1,'每4小时记录一次',name,item_type,unit,unit_price,billable,inventory_managed,
                  execution_role,'LONG_TERM','IN_PROGRESS',UTC_TIMESTAMP(3)-INTERVAL 2 DAY,1
             FROM medical_item WHERE item_code='NURS004';
         SET v_line = LAST_INSERT_ID();
         INSERT INTO execution_record(request_no,order_item_id,execution_time,quantity,status,result_note,
-            executor_id,phase,unit_snapshot,batch_key)
+            executor_id,phase,unit_snapshot)
           VALUES(CONCAT('SEED-N-',LPAD(i,3,'0')),v_line,UTC_TIMESTAMP(3)-INTERVAL 1 DAY,1,'SUCCESS','生命体征平稳',
-                 v_nurse,'PERFORM','项',CONCAT('SEED-B-N-',LPAD(i,3,'0')));
-        INSERT INTO order_item(medical_order_id,medical_item_id,quantity_per_execution,instructions,
+                 v_nurse,'PERFORM','项');
+        INSERT INTO order_item(medical_order_id,medical_item_id,execution_quantity_per_operation,instructions,
             item_name_snapshot,item_type_snapshot,unit_snapshot,price_snapshot,billable,inventory_managed,
-            execution_role,order_type,item_status,start_time)
+            execution_role,order_type,item_status,effective_start_time)
           SELECT v_order,id,1,'按医嘱执行',name,item_type,unit,unit_price,billable,inventory_managed,
                  execution_role,'LONG_TERM','SUBMITTED',UTC_TIMESTAMP(3)-INTERVAL 2 DAY
             FROM medical_item WHERE item_code = ELT(1 + MOD(i - 1, 4), 'DIET001','DIET004','DIET005','NURS006');
@@ -360,35 +360,38 @@ BEGIN
             SET v_order = LAST_INSERT_ID();
             UPDATE medical_order SET order_no=CONCAT(DATE_FORMAT(DATE_ADD(created_at,INTERVAL 8 HOUR),'%Y%m%d'),LPAD(v_order,8,'0'))
               WHERE id=v_order;
-            INSERT INTO order_item(medical_order_id,medical_item_id,dosage,quantity_per_execution,route,instructions,
+            INSERT INTO order_item(medical_order_id,medical_item_id,dose_per_administration,requested_dispense_quantity,route,instructions,
                 item_name_snapshot,item_type_snapshot,unit_snapshot,dose_unit,dose_units_per_stock,price_snapshot,
-                billable,inventory_managed,execution_role,order_type,item_status,start_time,
-                planned_administration_count,dispensed_quantity,administered_quantity,executed_quantity)
+                billable,inventory_managed,execution_role,order_type,item_status,administration_mode,effective_start_time,
+                dispensed_quantity,executed_quantity)
               SELECT v_order,mi.id,1,1,'口服','发热时一次服用',mi.name,mi.item_type,mi.unit,dp.dose_unit,
                      dp.dose_units_per_stock,mi.unit_price,mi.billable,mi.inventory_managed,'NURSE','TEMPORARY',
-                     'COMPLETED',UTC_TIMESTAMP(3)-INTERVAL 1 DAY,1,1,1,1
+                     'COMPLETED','ONCE',UTC_TIMESTAMP(3)-INTERVAL 1 DAY,1,1
                 FROM medical_item mi JOIN drug_profile dp ON dp.medical_item_id=mi.id WHERE mi.id=v_item;
             SET v_line = LAST_INSERT_ID();
+            INSERT INTO medication_schedule(order_item_id,scheduled_at,status,completed_at)
+              VALUES(v_line,UTC_TIMESTAMP(3)-INTERVAL 20 HOUR,'ADMINISTERED',UTC_TIMESTAMP(3)-INTERVAL 20 HOUR);
+            SET @seed_schedule=LAST_INSERT_ID();
             -- Dispense: one box leaves the pharmacy and is charged.
             INSERT INTO execution_record(request_no,order_item_id,execution_time,quantity,status,result_note,
-                executor_id,phase,unit_snapshot,batch_key)
+                executor_id,phase,unit_snapshot)
               VALUES(CONCAT('SEED-D-',LPAD(i,3,'0')),v_line,UTC_TIMESTAMP(3)-INTERVAL 1 DAY,1,'SUCCESS','已核对医嘱并发药',
-                     v_nurse,'DISPENSE','盒',CONCAT('SEED-B-D-',LPAD(i,3,'0')));
+                     v_nurse,'DISPENSE','盒');
             SET v_execution = LAST_INSERT_ID();
             UPDATE medical_item SET stock_quantity=stock_quantity-1,version=version+1 WHERE id=v_item;
             INSERT INTO drug_inventory_transaction(medical_item_id,execution_id,transaction_type,quantity,
                 before_quantity,after_quantity,note,created_at)
               VALUES(v_item,v_execution,'DISPENSE',-1,v_stock,v_stock-1,'药房发药',UTC_TIMESTAMP(3)-INTERVAL 1 DAY);
-            CALL sp_next_charge_number(FALSE, v_charge);
+            SET v_charge=CONCAT('C',SUBSTRING(REPLACE(UUID(),'-',''),1,30));
             INSERT INTO charge_detail(admission_id,execution_id,medical_item_id,department_id,charge_no,charge_type,
                 unit_price_snapshot,quantity,amount,note,charged_at)
               VALUES(v_admission,v_execution,v_item,v_department,v_charge,'NORMAL',v_price,1,v_price,'药房发药计费',
                      UTC_TIMESTAMP(3)-INTERVAL 1 DAY);
             -- Administer: one capsule is given. No stock movement and no second charge.
-            INSERT INTO execution_record(request_no,order_item_id,execution_time,quantity,status,result_note,
-                executor_id,phase,unit_snapshot,batch_key)
-              VALUES(CONCAT('SEED-A-',LPAD(i,3,'0')),v_line,UTC_TIMESTAMP(3)-INTERVAL 20 HOUR,1,'SUCCESS',
-                     '患者身份及用药信息核对无误',v_nurse,'ADMINISTER','粒',CONCAT('SEED-B-A-',LPAD(i,3,'0')));
+            INSERT INTO execution_record(request_no,order_item_id,schedule_id,execution_time,quantity,status,result_note,
+                executor_id,phase,unit_snapshot)
+              VALUES(CONCAT('SEED-A-',LPAD(i,3,'0')),v_line,@seed_schedule,UTC_TIMESTAMP(3)-INTERVAL 20 HOUR,1,'SUCCESS',
+                     '患者身份及用药信息核对无误',v_nurse,'ADMINISTER','粒');
         END IF;
 
         SET i = i + 1;
@@ -400,7 +403,7 @@ DROP PROCEDURE sp_seed_orders;
 
 -- ---------------------------------------------------------------------------
 -- Curated order states on the first patients: draft, awaiting dispense,
--- dispensed-awaiting-administration, a compounding group, stopped and cancelled.
+-- dispensed-awaiting-administration, independent infusion items, stopped and cancelled.
 -- ---------------------------------------------------------------------------
 SET @a1=(SELECT a.id FROM admission a JOIN patient p ON p.id=a.patient_id WHERE p.patient_no='P00002');
 SET @a2=(SELECT a.id FROM admission a JOIN patient p ON p.id=a.patient_id WHERE p.patient_no='P00003');
@@ -420,15 +423,15 @@ INSERT INTO medical_order(order_no,admission_id,status,start_time,note,prescribe
 VALUES(CONCAT('TMP',UUID_SHORT()),@a1,'DRAFT',UTC_TIMESTAMP(3),'待确认的肺炎基础医嘱',@doc1);
 SET @o1=LAST_INSERT_ID();
 UPDATE medical_order SET order_no=CONCAT(DATE_FORMAT(DATE_ADD(created_at,INTERVAL 8 HOUR),'%Y%m%d'),LPAD(@o1,8,'0')) WHERE id=@o1;
-INSERT INTO order_item(medical_order_id,medical_item_id,dosage,quantity_per_execution,route,instructions,
+INSERT INTO order_item(medical_order_id,medical_item_id,dose_per_administration,requested_dispense_quantity,route,instructions,
     item_name_snapshot,item_type_snapshot,unit_snapshot,dose_unit,dose_units_per_stock,price_snapshot,
-    billable,inventory_managed,execution_role,order_type,item_status,start_time,planned_administration_count)
+    billable,inventory_managed,execution_role,order_type,item_status,administration_mode,administration_interval_minutes,effective_start_time,effective_end_time)
 SELECT @o1,mi.id,1,1,'口服','每12小时一次，共14次',mi.name,mi.item_type,mi.unit,dp.dose_unit,dp.dose_units_per_stock,
-       mi.unit_price,mi.billable,mi.inventory_managed,'NURSE','TEMPORARY','DRAFT',UTC_TIMESTAMP(3),14
+       mi.unit_price,mi.billable,mi.inventory_managed,'NURSE','LONG_TERM','DRAFT','SCHEDULED',720,UTC_TIMESTAMP(3),UTC_TIMESTAMP(3)+INTERVAL 7 DAY
 FROM medical_item mi JOIN drug_profile dp ON dp.medical_item_id=mi.id WHERE mi.item_code='DRUG006';
-INSERT INTO order_item(medical_order_id,medical_item_id,quantity_per_execution,instructions,
+INSERT INTO order_item(medical_order_id,medical_item_id,execution_quantity_per_operation,instructions,
     item_name_snapshot,item_type_snapshot,unit_snapshot,price_snapshot,billable,inventory_managed,
-    execution_role,order_type,item_status,start_time)
+    execution_role,order_type,item_status,effective_start_time)
 SELECT @o1,id,1,'与用药同步复查',name,item_type,unit,unit_price,billable,inventory_managed,
        execution_role,'TEMPORARY','DRAFT',UTC_TIMESTAMP(3) FROM medical_item WHERE item_code='LAB001';
 
@@ -437,22 +440,20 @@ INSERT INTO medical_order(order_no,admission_id,status,start_time,submitted_at,n
 VALUES(CONCAT('TMP',UUID_SHORT()),@a2,'SUBMITTED',UTC_TIMESTAMP(3),UTC_TIMESTAMP(3),'等待药房发药',@doc2);
 SET @o2=LAST_INSERT_ID();
 UPDATE medical_order SET order_no=CONCAT(DATE_FORMAT(DATE_ADD(created_at,INTERVAL 8 HOUR),'%Y%m%d'),LPAD(@o2,8,'0')) WHERE id=@o2;
-INSERT INTO order_item(medical_order_id,medical_item_id,dosage,quantity_per_execution,route,instructions,
+INSERT INTO order_item(medical_order_id,medical_item_id,dose_per_administration,requested_dispense_quantity,route,instructions,
     item_name_snapshot,item_type_snapshot,unit_snapshot,dose_unit,dose_units_per_stock,price_snapshot,
-    billable,inventory_managed,execution_role,order_type,item_status,start_time,planned_administration_count)
+    billable,inventory_managed,execution_role,order_type,item_status,administration_mode,administration_interval_minutes,effective_start_time,effective_end_time)
 SELECT @o2,mi.id,1,1,'口服','每8小时一次，共6次',mi.name,mi.item_type,mi.unit,dp.dose_unit,dp.dose_units_per_stock,
-       mi.unit_price,mi.billable,mi.inventory_managed,'NURSE','TEMPORARY','SUBMITTED',UTC_TIMESTAMP(3),6
+       mi.unit_price,mi.billable,mi.inventory_managed,'NURSE','LONG_TERM','SUBMITTED','SCHEDULED',480,UTC_TIMESTAMP(3),UTC_TIMESTAMP(3)+INTERVAL 2 DAY
 FROM medical_item mi JOIN drug_profile dp ON dp.medical_item_id=mi.id WHERE mi.item_code='DRUG001';
+SET @line_o2=LAST_INSERT_ID();
+INSERT INTO medication_schedule(order_item_id,scheduled_at) VALUES(@line_o2,UTC_TIMESTAMP(3));
 
--- Compounding group: two drugs share one route and schedule, dispensed together.
--- Each drug keeps its own stock movement and its own charge.
+-- Independent infusion items: each drug is dispensed and charged separately.
 INSERT INTO medical_order(order_no,admission_id,status,start_time,submitted_at,note,prescribed_by)
-VALUES(CONCAT('TMP',UUID_SHORT()),@a3,'IN_PROGRESS',UTC_TIMESTAMP(3)-INTERVAL 6 HOUR,UTC_TIMESTAMP(3)-INTERVAL 6 HOUR,'抗感染静滴组，已发药待给药',@doc3);
+VALUES(CONCAT('TMP',UUID_SHORT()),@a3,'IN_PROGRESS',UTC_TIMESTAMP(3)-INTERVAL 6 HOUR,UTC_TIMESTAMP(3)-INTERVAL 6 HOUR,'抗感染静滴医嘱，已发药待给药',@doc3);
 SET @o3=LAST_INSERT_ID();
 UPDATE medical_order SET order_no=CONCAT(DATE_FORMAT(DATE_ADD(created_at,INTERVAL 8 HOUR),'%Y%m%d'),LPAD(@o3,8,'0')) WHERE id=@o3;
-INSERT INTO order_group(medical_order_id,name,route,order_type,start_time)
-VALUES(@o3,'头孢曲松静滴组','静脉滴注','TEMPORARY',UTC_TIMESTAMP(3)-INTERVAL 6 HOUR);
-SET @g3=LAST_INSERT_ID();
 SET @dept3=(SELECT department_id FROM admission WHERE id=@a3);
 SET @nurse3=(SELECT id FROM staff WHERE department_id=@dept3 AND staff_type='NURSE' AND active ORDER BY id LIMIT 1);
 
@@ -460,20 +461,21 @@ SET @nurse3=(SELECT id FROM staff WHERE department_id=@dept3 AND staff_type='NUR
 SET @sodium=(SELECT id FROM medical_item WHERE item_code='DRUG002');
 SET @sodium_stock=(SELECT stock_quantity FROM medical_item WHERE id=@sodium);
 SET @sodium_price=(SELECT unit_price FROM medical_item WHERE id=@sodium);
-INSERT INTO order_item(medical_order_id,medical_item_id,group_id,dosage,quantity_per_execution,route,instructions,
+INSERT INTO order_item(medical_order_id,medical_item_id,dose_per_administration,requested_dispense_quantity,route,instructions,
     item_name_snapshot,item_type_snapshot,unit_snapshot,dose_unit,dose_units_per_stock,price_snapshot,
-    billable,inventory_managed,execution_role,order_type,item_status,start_time,planned_administration_count,dispensed_quantity)
-SELECT @o3,mi.id,@g3,250,1,'静脉滴注','溶媒，单次250mL',mi.name,mi.item_type,mi.unit,dp.dose_unit,dp.dose_units_per_stock,
-       mi.unit_price,mi.billable,mi.inventory_managed,'NURSE','TEMPORARY','IN_PROGRESS',UTC_TIMESTAMP(3)-INTERVAL 6 HOUR,1,1
+    billable,inventory_managed,execution_role,order_type,item_status,administration_mode,effective_start_time,dispensed_quantity)
+SELECT @o3,mi.id,250,1,'静脉滴注','溶媒，单次250mL',mi.name,mi.item_type,mi.unit,dp.dose_unit,dp.dose_units_per_stock,
+       mi.unit_price,mi.billable,mi.inventory_managed,'NURSE','TEMPORARY','IN_PROGRESS','ONCE',UTC_TIMESTAMP(3)-INTERVAL 6 HOUR,1
 FROM medical_item mi JOIN drug_profile dp ON dp.medical_item_id=mi.id WHERE mi.id=@sodium;
 SET @line_sodium=LAST_INSERT_ID();
-INSERT INTO execution_record(request_no,order_item_id,execution_time,quantity,status,result_note,executor_id,phase,unit_snapshot,batch_key)
-VALUES('SEED-GRP-DISPENSE-1',@line_sodium,UTC_TIMESTAMP(3)-INTERVAL 5 HOUR,1,'SUCCESS','配液组发药',@nurse3,'DISPENSE','袋','SEED-GRP-BATCH-1');
+INSERT INTO medication_schedule(order_item_id,scheduled_at) VALUES(@line_sodium,UTC_TIMESTAMP(3)-INTERVAL 4 HOUR);
+INSERT INTO execution_record(request_no,order_item_id,execution_time,quantity,status,result_note,executor_id,phase,unit_snapshot)
+VALUES('SEED-INFUSION-DISPENSE-1',@line_sodium,UTC_TIMESTAMP(3)-INTERVAL 5 HOUR,1,'SUCCESS','药房发药',@nurse3,'DISPENSE','袋');
 SET @exec_sodium=LAST_INSERT_ID();
 UPDATE medical_item SET stock_quantity=stock_quantity-1,version=version+1 WHERE id=@sodium;
 INSERT INTO drug_inventory_transaction(medical_item_id,execution_id,transaction_type,quantity,before_quantity,after_quantity,note,created_at)
 VALUES(@sodium,@exec_sodium,'DISPENSE',-1,@sodium_stock,@sodium_stock-1,'药房发药',UTC_TIMESTAMP(3)-INTERVAL 5 HOUR);
-CALL sp_next_charge_number(FALSE, @charge_sodium);
+SET @charge_sodium=CONCAT('C',SUBSTRING(REPLACE(UUID(),'-',''),1,30));
 INSERT INTO charge_detail(admission_id,execution_id,medical_item_id,department_id,charge_no,charge_type,
     unit_price_snapshot,quantity,amount,note,charged_at)
 VALUES(@a3,@exec_sodium,@sodium,@dept3,@charge_sodium,'NORMAL',@sodium_price,1,@sodium_price,'药房发药计费',UTC_TIMESTAMP(3)-INTERVAL 5 HOUR);
@@ -482,20 +484,21 @@ VALUES(@a3,@exec_sodium,@sodium,@dept3,@charge_sodium,'NORMAL',@sodium_price,1,@
 SET @ceftri=(SELECT id FROM medical_item WHERE item_code='DRUG004');
 SET @ceftri_stock=(SELECT stock_quantity FROM medical_item WHERE id=@ceftri);
 SET @ceftri_price=(SELECT unit_price FROM medical_item WHERE id=@ceftri);
-INSERT INTO order_item(medical_order_id,medical_item_id,group_id,dosage,quantity_per_execution,route,instructions,
+INSERT INTO order_item(medical_order_id,medical_item_id,dose_per_administration,requested_dispense_quantity,route,instructions,
     item_name_snapshot,item_type_snapshot,unit_snapshot,dose_unit,dose_units_per_stock,price_snapshot,
-    billable,inventory_managed,execution_role,order_type,item_status,start_time,planned_administration_count,dispensed_quantity)
-SELECT @o3,mi.id,@g3,2,1,'静脉滴注','主药，单次2g',mi.name,mi.item_type,mi.unit,dp.dose_unit,dp.dose_units_per_stock,
-       mi.unit_price,mi.billable,mi.inventory_managed,'NURSE','TEMPORARY','IN_PROGRESS',UTC_TIMESTAMP(3)-INTERVAL 6 HOUR,1,1
+    billable,inventory_managed,execution_role,order_type,item_status,administration_mode,effective_start_time,dispensed_quantity)
+SELECT @o3,mi.id,2,1,'静脉滴注','主药，单次2g',mi.name,mi.item_type,mi.unit,dp.dose_unit,dp.dose_units_per_stock,
+       mi.unit_price,mi.billable,mi.inventory_managed,'NURSE','TEMPORARY','IN_PROGRESS','ONCE',UTC_TIMESTAMP(3)-INTERVAL 6 HOUR,1
 FROM medical_item mi JOIN drug_profile dp ON dp.medical_item_id=mi.id WHERE mi.id=@ceftri;
 SET @line_ceftri=LAST_INSERT_ID();
-INSERT INTO execution_record(request_no,order_item_id,execution_time,quantity,status,result_note,executor_id,phase,unit_snapshot,batch_key)
-VALUES('SEED-GRP-DISPENSE-2',@line_ceftri,UTC_TIMESTAMP(3)-INTERVAL 5 HOUR,1,'SUCCESS','配液组发药',@nurse3,'DISPENSE','瓶','SEED-GRP-BATCH-1');
+INSERT INTO medication_schedule(order_item_id,scheduled_at) VALUES(@line_ceftri,UTC_TIMESTAMP(3)-INTERVAL 4 HOUR);
+INSERT INTO execution_record(request_no,order_item_id,execution_time,quantity,status,result_note,executor_id,phase,unit_snapshot)
+VALUES('SEED-INFUSION-DISPENSE-2',@line_ceftri,UTC_TIMESTAMP(3)-INTERVAL 5 HOUR,1,'SUCCESS','药房发药',@nurse3,'DISPENSE','瓶');
 SET @exec_ceftri=LAST_INSERT_ID();
 UPDATE medical_item SET stock_quantity=stock_quantity-1,version=version+1 WHERE id=@ceftri;
 INSERT INTO drug_inventory_transaction(medical_item_id,execution_id,transaction_type,quantity,before_quantity,after_quantity,note,created_at)
 VALUES(@ceftri,@exec_ceftri,'DISPENSE',-1,@ceftri_stock,@ceftri_stock-1,'药房发药',UTC_TIMESTAMP(3)-INTERVAL 5 HOUR);
-CALL sp_next_charge_number(FALSE, @charge_ceftri);
+SET @charge_ceftri=CONCAT('C',SUBSTRING(REPLACE(UUID(),'-',''),1,30));
 INSERT INTO charge_detail(admission_id,execution_id,medical_item_id,department_id,charge_no,charge_type,
     unit_price_snapshot,quantity,amount,note,charged_at)
 VALUES(@a3,@exec_ceftri,@ceftri,@dept3,@charge_ceftri,'NORMAL',@ceftri_price,1,@ceftri_price,'药房发药计费',UTC_TIMESTAMP(3)-INTERVAL 5 HOUR);
@@ -509,17 +512,17 @@ SET @dept4=(SELECT department_id FROM admission WHERE id=@a4);
 SET @nurse4=(SELECT id FROM staff WHERE department_id=@dept4 AND staff_type='NURSE' AND active ORDER BY id LIMIT 1);
 SET @oxygen=(SELECT id FROM medical_item WHERE item_code='TREAT003');
 SET @oxygen_price=(SELECT unit_price FROM medical_item WHERE id=@oxygen);
-INSERT INTO order_item(medical_order_id,medical_item_id,quantity_per_execution,instructions,
+INSERT INTO order_item(medical_order_id,medical_item_id,execution_quantity_per_operation,instructions,
     item_name_snapshot,item_type_snapshot,unit_snapshot,price_snapshot,billable,inventory_managed,
-    execution_role,order_type,item_status,start_time,end_time,executed_quantity)
+    execution_role,order_type,item_status,effective_start_time,effective_end_time,executed_quantity)
 SELECT @o4,id,2,'鼻导管低流量吸氧，每次2小时',name,item_type,unit,unit_price,billable,inventory_managed,
        execution_role,'LONG_TERM','STOPPED',UTC_TIMESTAMP(3)-INTERVAL 2 DAY,UTC_TIMESTAMP(3),2
 FROM medical_item WHERE id=@oxygen;
 SET @line_oxygen=LAST_INSERT_ID();
-INSERT INTO execution_record(request_no,order_item_id,execution_time,quantity,status,result_note,executor_id,phase,unit_snapshot,batch_key)
-VALUES('SEED-OXY-1',@line_oxygen,UTC_TIMESTAMP(3)-INTERVAL 2 DAY,2,'SUCCESS','吸氧2小时，血氧回升',@nurse4,'PERFORM','小时','SEED-OXY-B1');
+INSERT INTO execution_record(request_no,order_item_id,execution_time,quantity,status,result_note,executor_id,phase,unit_snapshot)
+VALUES('SEED-OXY-1',@line_oxygen,UTC_TIMESTAMP(3)-INTERVAL 2 DAY,2,'SUCCESS','吸氧2小时，血氧回升',@nurse4,'PERFORM','小时');
 SET @exec_oxygen=LAST_INSERT_ID();
-CALL sp_next_charge_number(FALSE, @charge_oxygen);
+SET @charge_oxygen=CONCAT('C',SUBSTRING(REPLACE(UUID(),'-',''),1,30));
 INSERT INTO charge_detail(admission_id,execution_id,medical_item_id,department_id,charge_no,charge_type,
     unit_price_snapshot,quantity,amount,note,charged_at)
 VALUES(@a4,@exec_oxygen,@oxygen,@dept4,@charge_oxygen,'NORMAL',@oxygen_price,2,@oxygen_price*2,'项目执行计费',UTC_TIMESTAMP(3)-INTERVAL 2 DAY);
@@ -529,9 +532,9 @@ INSERT INTO medical_order(order_no,admission_id,status,start_time,submitted_at,n
 VALUES(CONCAT('TMP',UUID_SHORT()),@a5,'CANCELLED',UTC_TIMESTAMP(3),UTC_TIMESTAMP(3),'开立后因病情变化撤销',@doc5);
 SET @o5=LAST_INSERT_ID();
 UPDATE medical_order SET order_no=CONCAT(DATE_FORMAT(DATE_ADD(created_at,INTERVAL 8 HOUR),'%Y%m%d'),LPAD(@o5,8,'0')) WHERE id=@o5;
-INSERT INTO order_item(medical_order_id,medical_item_id,quantity_per_execution,instructions,
+INSERT INTO order_item(medical_order_id,medical_item_id,execution_quantity_per_operation,instructions,
     item_name_snapshot,item_type_snapshot,unit_snapshot,price_snapshot,billable,inventory_managed,
-    execution_role,order_type,item_status,start_time)
+    execution_role,order_type,item_status,effective_start_time)
 SELECT @o5,id,1,'原计划检查，后撤销',name,item_type,unit,unit_price,billable,inventory_managed,
        execution_role,'TEMPORARY','CANCELLED',UTC_TIMESTAMP(3) FROM medical_item WHERE item_code='LAB004';
 
@@ -592,7 +595,7 @@ BEGIN
     read_loop: LOOP
         FETCH cur INTO v_admission,v_department;
         IF v_done=1 THEN LEAVE read_loop; END IF;
-        CALL sp_next_charge_number(FALSE, v_charge);
+        SET v_charge=CONCAT('C',SUBSTRING(REPLACE(UUID(),'-',''),1,30));
         INSERT INTO charge_detail(admission_id,execution_id,medical_item_id,department_id,charge_no,charge_type,
             unit_price_snapshot,quantity,amount,note,charged_at)
           VALUES(v_admission,NULL,v_bed_item,v_department,v_charge,'NORMAL',v_bed_price,1,v_bed_price,
@@ -629,8 +632,8 @@ SET mo.status=IF(EXISTS(SELECT 1 FROM order_item oi WHERE oi.medical_order_id=mo
                  'COMPLETED','CANCELLED')
 WHERE mo.admission_id IN (@settle1,@settle2) AND mo.status IN ('DRAFT','SUBMITTED','IN_PROGRESS');
 
-CALL sp_discharge_settlement(@settle1, NULL, @settlement1);
-CALL sp_discharge_settlement(@settle2, NULL, @settlement2);
+CALL sp_discharge_settlement(@settle1, 'CASH', NULL, @settlement1);
+CALL sp_discharge_settlement(@settle2, 'CASH', NULL, @settlement2);
 
 -- ---------------------------------------------------------------------------
 -- Overdue alerts. The only rule is a negative available balance on an open stay.
@@ -646,3 +649,57 @@ WHERE a.status IN ('IN_HOSPITAL','PENDING_DISCHARGE') AND v.available_balance < 
 INSERT INTO account_alert(admission_id,alert_type,level,balance_snapshot,threshold_snapshot,status,created_at,resolved_at)
 SELECT a.id,'LOW_BALANCE','WARNING',-120.00,0,'RESOLVED',UTC_TIMESTAMP(3)-INTERVAL 2 DAY,UTC_TIMESTAMP(3)-INTERVAL 1 DAY
 FROM admission a JOIN patient p ON p.id=a.patient_id WHERE p.patient_no='P00012';
+SET NAMES utf8mb4;
+SET time_zone = '+00:00';
+
+-- Additional finance-screen examples.  These are real charge/deposit facts:
+-- patients 1-4 remain OPEN with a negative balance, while patients 5-8 first
+-- enter the same negative state and then become RESOLVED after a supplement.
+-- A cursor is required because the charge/deposit guards lock admission and
+-- MySQL disallows selecting that row in the same INSERT ... SELECT statement.
+DROP PROCEDURE IF EXISTS sp_seed_alert_demo;
+DELIMITER $$
+CREATE PROCEDURE sp_seed_alert_demo()
+BEGIN
+    DECLARE v_done INT DEFAULT 0;
+    DECLARE v_admission BIGINT;
+    DECLARE v_department BIGINT;
+    DECLARE v_item BIGINT;
+    DECLARE v_price DECIMAL(12,2);
+    DECLARE v_patient_no VARCHAR(32);
+    DECLARE cur CURSOR FOR
+      SELECT a.id,a.department_id,p.patient_no
+      FROM admission a JOIN patient p ON p.id=a.patient_id
+      WHERE p.patient_no IN ('P00001','P00002','P00003','P00004','P00005','P00006','P00007','P00008')
+      ORDER BY a.id;
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET v_done=1;
+
+    SELECT id,unit_price INTO v_item,v_price FROM medical_item WHERE item_code='EXAM005';
+    OPEN cur;
+    read_loop: LOOP
+      FETCH cur INTO v_admission,v_department,v_patient_no;
+      IF v_done=1 THEN LEAVE read_loop; END IF;
+
+      IF NOT EXISTS (SELECT 1 FROM charge_detail WHERE charge_no=CONCAT('ALERTCHG',LPAD(v_admission,8,'0'))) THEN
+        INSERT INTO charge_detail(admission_id,execution_id,medical_item_id,department_id,charge_no,charge_type,
+          unit_price_snapshot,quantity,amount,note,charged_at)
+        VALUES(v_admission,NULL,v_item,v_department,CONCAT('ALERTCHG',LPAD(v_admission,8,'0')),'NORMAL',
+          v_price,10,v_price*10,'演示欠费提醒费用',UTC_TIMESTAMP(3)-INTERVAL 1 DAY);
+      END IF;
+
+      -- Capture the negative-balance state before the later supplement.
+      CALL sp_refresh_account_alert(v_admission,0,NULL);
+
+      IF v_patient_no IN ('P00005','P00006','P00007','P00008')
+         AND NOT EXISTS (SELECT 1 FROM deposit_transaction WHERE transaction_no=CONCAT('ALERTDEP',LPAD(v_admission,8,'0'))) THEN
+        INSERT INTO deposit_transaction(admission_id,transaction_no,transaction_type,amount,payment_method,note)
+        VALUES(v_admission,CONCAT('ALERTDEP',LPAD(v_admission,8,'0')),'SUPPLEMENT',1000.00,'CASH','演示欠费提醒后补交押金');
+      END IF;
+
+      CALL sp_refresh_account_alert(v_admission,0,NULL);
+    END LOOP;
+    CLOSE cur;
+END$$
+DELIMITER ;
+CALL sp_seed_alert_demo();
+DROP PROCEDURE sp_seed_alert_demo;

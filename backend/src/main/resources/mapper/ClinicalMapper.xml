@@ -12,11 +12,10 @@
     <select id="findOrderItems" resultType="map">
         SELECT oi.*, mi.item_code, COALESCE(oi.item_name_snapshot,mi.name) item_name,
                COALESCE(oi.item_type_snapshot,mi.item_type) item_type, COALESCE(oi.unit_snapshot,mi.unit) unit,
-               mi.unit_price, mi.stock_quantity, og.name group_name,
+               mi.unit_price, mi.stock_quantity,
                (SELECT COUNT(*) FROM execution_record er WHERE er.order_item_id=oi.id AND er.phase='ADMINISTER' AND er.status='SUCCESS'
                    AND NOT EXISTS(SELECT 1 FROM execution_record rev WHERE rev.reversed_execution_id=er.id)) administration_count
         FROM order_item oi JOIN medical_item mi ON mi.id=oi.medical_item_id
-        LEFT JOIN order_group og ON og.id=oi.group_id
         WHERE oi.medical_order_id=#{orderId} ORDER BY oi.id
     </select>
     <sql id="orderFilters">

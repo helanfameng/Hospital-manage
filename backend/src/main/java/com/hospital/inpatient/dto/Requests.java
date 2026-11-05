@@ -51,8 +51,12 @@ public final class Requests {
             @NotNull Long departmentId,
             @NotNull Long doctorId,
             @NotNull Long bedId,
-            @NotNull @Digits(integer=10,fraction=2) @DecimalMin(value = "0.00") BigDecimal initialDeposit
+            @NotNull @Digits(integer=10,fraction=2) @DecimalMin(value = "0.00") BigDecimal initialDeposit,
+            @NotBlank @Pattern(regexp = "CASH|CARD|TRANSFER", message = "支付方式不合法") String paymentMethod
     ) {
+        public AdmissionCreate(Long patientId, Long departmentId, Long doctorId, Long bedId, BigDecimal initialDeposit) {
+            this(patientId, departmentId, doctorId, bedId, initialDeposit, "CASH");
+        }
     }
 
     public record TransferCreate(
@@ -71,30 +75,52 @@ public final class Requests {
 
     public record OrderLine(
             @NotNull Long medicalItemId,
-            @Digits(integer=9,fraction=3) @DecimalMin(value = "0.001") BigDecimal dosage,
-            @NotNull @Digits(integer=9,fraction=3) @DecimalMin(value = "0.001") BigDecimal quantity,
+            @Digits(integer=9,fraction=3) @DecimalMin(value = "0.001") BigDecimal dosePerAdministration,
+            @Digits(integer=9,fraction=3) @DecimalMin(value = "0.001") BigDecimal requestedDispenseQuantity,
+            @Digits(integer=9,fraction=3) @DecimalMin(value = "0.001") BigDecimal executionQuantityPerOperation,
             @Size(max=64) String route,
             @Size(max=255) String instructions,
             @Size(max=20) String doseUnit,
             @Pattern(regexp="TEMPORARY|LONG_TERM") String orderType,
+            @Pattern(regexp="ONCE|SCHEDULED|PRN") String administrationMode,
+            @Min(1) Integer administrationIntervalMinutes,
+            @Min(1) @Max(100) Integer maxAdministrationsPerDay,
             Instant startTime,
-            Instant endTime,
-            @Size(max=100) String groupKey,
-            @Min(1) @Max(1000) Integer plannedAdministrationCount,
-            @Size(max=255) String excessDispenseReason
+            Instant endTime
     ) {
+        /** Compatibility constructor retained for internal callers while the API uses explicit quantities. */
         public OrderLine(Long medicalItemId, BigDecimal dosage, BigDecimal quantity, String route, String instructions,
-                         String doseUnit, String orderType, Instant startTime, Instant endTime, String groupKey) {
-            this(medicalItemId,dosage,quantity,route,instructions,doseUnit,orderType,startTime,endTime,groupKey,null,null);
+                         String doseUnit, String orderType, Instant startTime, Instant endTime) {
+            this(medicalItemId,dosage,dosage==null?null:quantity,dosage==null?quantity:null,route,instructions,doseUnit,
+                    orderType,dosage==null?null:("TEMPORARY".equals(orderType)?"ONCE":"SCHEDULED"),
+                    dosage!=null&&"LONG_TERM".equals(orderType)?480:null,null,startTime,endTime);
+        }
+        /** Compatibility constructor; grouping input is ignored because items execute independently. */
+        public OrderLine(Long medicalItemId, BigDecimal dosage, BigDecimal quantity, String route, String instructions,
+                         String doseUnit, String orderType, Instant startTime, Instant endTime, String ignoredGrouping) {
+            this(medicalItemId,dosage,quantity,route,instructions,doseUnit,orderType,startTime,endTime);
+        }
+        /** Legacy finite-plan constructor now maps to the new single/recurring timing model. */
+        public OrderLine(Long medicalItemId, BigDecimal dosage, BigDecimal quantity, String route, String instructions,
+                         String doseUnit, String orderType, Instant startTime, Instant endTime, String ignoredGrouping,
+                         Integer plannedAdministrationCount, String excessDispenseReason) {
+            this(medicalItemId,dosage,quantity,route,instructions,doseUnit,orderType,startTime,endTime);
         }
         public OrderLine(Long medicalItemId, BigDecimal dosage, BigDecimal quantity, String route, String instructions) {
-            this(medicalItemId,dosage,quantity,route,instructions,null,null,null,null,null);
+            this(medicalItemId,dosage,quantity,route,instructions,null,"TEMPORARY",null,null);
         }
     }
 
     public record OrderExecution(@NotBlank @Size(max=64) String requestNo, @NotNull Long orderItemId,
+            Long scheduleId,
             @NotBlank @Pattern(regexp="DISPENSE|ADMINISTER|PERFORM") String phase,
-            boolean notDone, @Size(max=500) String note) {}
+            @Digits(integer=9,fraction=3) @DecimalMin(value = "0.001") BigDecimal actualQuantity,
+            @Size(max=255) String quantityVarianceReason,
+            boolean notDone, @Size(max=500) String note) {
+        public OrderExecution(String requestNo,Long orderItemId,String phase,boolean notDone,String note) {
+            this(requestNo,orderItemId,null,phase,null,null,notDone,note);
+        }
+    }
 
     public record DepositCreate(
             @NotNull Long admissionId,
@@ -103,6 +129,11 @@ public final class Requests {
             @NotBlank @Pattern(regexp = "CASH|CARD|TRANSFER", message = "支付方式不合法") String paymentMethod,
             @Size(max = 255) String note,
             @NotBlank @Size(max=64) String requestNo
+    ) {
+    }
+
+    public record SettlementCreate(
+            @NotBlank @Pattern(regexp = "CASH|CARD|TRANSFER", message = "退款支付方式不合法") String paymentMethod
     ) {
     }
 

@@ -1,5 +1,5 @@
 %% 小型医院住院信息管理与费用结算系统
-%% 依据当前 V1 / database/schema.sql 生成，共 30 张应用表
+%% 依据当前 V1 / database/schema.sql 生成，共 27 张业务表
 %% 基数按照外键是否可空、是否唯一确定；未把业务规则误画成数据库外键
 erDiagram
     direction LR
@@ -160,43 +160,47 @@ erDiagram
         varchar allowed_routes
     }
 
-    order_group {
-        bigint id PK
-        bigint medical_order_id FK
-        varchar name
-        varchar route
-        varchar order_type
-        datetime start_time
-        datetime end_time
-    }
-
     order_item {
         bigint id PK
         bigint medical_order_id FK
         bigint medical_item_id FK
-        bigint group_id FK
-        decimal dosage
-        decimal quantity_per_execution
+        decimal dose_per_administration
+        decimal requested_dispense_quantity
+        decimal execution_quantity_per_operation
         varchar order_type
         varchar item_status
-        int planned_administration_count
+        varchar administration_mode
+        int administration_interval_minutes
+        int max_administrations_per_day
+        datetime effective_start_time
+        datetime effective_end_time
         decimal dispensed_quantity
-        decimal administered_quantity
         decimal executed_quantity
         varchar route
+    }
+
+    medication_schedule {
+        bigint id PK
+        bigint order_item_id FK
+        datetime scheduled_at
+        varchar status
+        datetime completed_at
+        varchar not_done_reason
+        datetime deferred_until
     }
 
     execution_record {
         bigint id PK
         varchar request_no UK
         bigint order_item_id FK
+        bigint schedule_id FK
         bigint executor_id FK
         bigint reversed_execution_id FK
         datetime execution_time
         decimal quantity
+        varchar quantity_variance_reason
         varchar status
         varchar phase
-        varchar batch_key
     }
 
     drug_inventory_transaction {
@@ -250,14 +254,6 @@ erDiagram
         datetime settled_at
     }
 
-    settlement_detail {
-        bigint id PK
-        bigint settlement_id FK
-        varchar category
-        decimal amount
-        int item_count
-    }
-
     account_alert {
         bigint id PK
         bigint admission_id FK
@@ -283,11 +279,6 @@ erDiagram
         bigint template_id FK
         bigint medical_item_id FK
         int sort_order
-    }
-
-    charge_number_sequence {
-        bigint id PK
-        datetime allocated_at
     }
 
     audit_log {
@@ -342,11 +333,11 @@ erDiagram
     admission ||--o{ medical_order : "admission_id"
     staff ||--o{ medical_order : "prescribed_by"
     medical_order ||--o{ order_item : "medical_order_id"
-    medical_order ||--o{ order_group : "medical_order_id"
     medical_item ||--o{ order_item : "medical_item_id"
     medical_item ||--o| drug_profile : "medical_item_id"
-    order_group o|--o{ order_item : "group_id"
+    order_item ||--o{ medication_schedule : "order_item_id"
     order_item ||--o{ execution_record : "order_item_id"
+    medication_schedule o|--o{ execution_record : "schedule_id"
     staff ||--o{ execution_record : "executor_id"
     execution_record o|--o{ execution_record : "reversed_execution_id"
 
@@ -369,7 +360,6 @@ erDiagram
     %% 结算；admission_id 唯一，所以一次住院最多一张结算单
     admission ||--o| settlement : "admission_id"
     user_account o|--o{ settlement : "settled_by"
-    settlement ||--o{ settlement_detail : "settlement_id"
 
     %% 告警与审计
     admission ||--o{ account_alert : "admission_id"

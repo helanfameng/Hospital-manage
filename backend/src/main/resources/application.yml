@@ -38,6 +38,8 @@ hospital:
     allowed-origin: ${HOSPITAL_FRONTEND_ORIGIN:http://localhost:5173}
   account:
     alert-threshold: 0.00
+  statistics:
+    long-stay-days: ${HOSPITAL_STATISTICS_LONG_STAY_DAYS:14}
 
 management:
   endpoints:

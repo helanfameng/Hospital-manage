@@ -7,7 +7,7 @@ DELIMITER $$
 DROP PROCEDURE IF EXISTS sp_admit_patient$$
 CREATE PROCEDURE sp_admit_patient(IN p_patient_id BIGINT, IN p_department_id BIGINT,
     IN p_doctor_id BIGINT, IN p_bed_id BIGINT, IN p_initial_deposit DECIMAL(12,2),
-    IN p_operator_id BIGINT, OUT p_admission_id BIGINT)
+    IN p_payment_method VARCHAR(20), IN p_operator_id BIGINT, OUT p_admission_id BIGINT)
 BEGIN
     DECLARE v_patient BIGINT DEFAULT NULL;
     DECLARE v_bed BIGINT DEFAULT NULL;
@@ -16,6 +16,8 @@ BEGIN
     IF v_patient IS NULL THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='患者不存在或已停用'; END IF;
     IF p_initial_deposit IS NULL OR p_initial_deposit<0 THEN
         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='初始押金不能为负数'; END IF;
+    IF p_initial_deposit>0 AND (p_payment_method IS NULL OR p_payment_method NOT IN ('CASH','CARD','TRANSFER')) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='初始押金支付方式不合法'; END IF;
     IF EXISTS(SELECT 1 FROM admission WHERE active_patient_key=p_patient_id) THEN
         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='患者已有有效住院记录'; END IF;
     SELECT b.id INTO v_bed FROM bed b JOIN room r ON r.id=b.room_id JOIN ward w ON w.id=r.ward_id
@@ -33,7 +35,7 @@ BEGIN
     UPDATE bed SET status='OCCUPIED',version=version+1 WHERE id=p_bed_id;
     IF p_initial_deposit>0 THEN
       INSERT INTO deposit_transaction(admission_id,transaction_no,transaction_type,amount,payment_method,note,operated_by)
-        VALUES(p_admission_id,CONCAT('D',UUID_SHORT()),'INITIAL',p_initial_deposit,'CASH','入院初始押金',p_operator_id);
+        VALUES(p_admission_id,CONCAT('D',UUID_SHORT()),'INITIAL',p_initial_deposit,p_payment_method,'入院初始押金',p_operator_id);
     END IF;
 END$$
 
@@ -98,7 +100,7 @@ BEGIN
 END$$
 
 DROP PROCEDURE IF EXISTS sp_discharge_settlement$$
-CREATE PROCEDURE sp_discharge_settlement(IN p_admission_id BIGINT,IN p_operator_id BIGINT,OUT p_settlement_id BIGINT)
+CREATE PROCEDURE sp_discharge_settlement(IN p_admission_id BIGINT,IN p_payment_method VARCHAR(20),IN p_operator_id BIGINT,OUT p_settlement_id BIGINT)
 BEGIN
     DECLARE v_status VARCHAR(24) DEFAULT NULL;
     DECLARE v_bed BIGINT;
@@ -114,37 +116,21 @@ BEGIN
     IF v_charge<0 OR v_deposit<0 THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='账目存在异常负余额，请先核对'; END IF;
     IF v_charge>v_deposit THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='押金不足，请先补缴费用'; END IF;
     SET v_refund=v_deposit-v_charge;
+    IF v_refund>0 AND (p_payment_method IS NULL OR p_payment_method NOT IN ('CASH','CARD','TRANSFER')) THEN
+      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='退款支付方式不合法'; END IF;
     -- Refund precedes the settlement row so the closed-account guard remains universal.
     IF v_refund>0 THEN
       INSERT INTO deposit_transaction(admission_id,transaction_no,transaction_type,amount,payment_method,note,operated_by)
-        VALUES(p_admission_id,CONCAT('D',UUID_SHORT()),'REFUND',-v_refund,'CASH','出院结算退款',p_operator_id);
+        VALUES(p_admission_id,CONCAT('D',UUID_SHORT()),'REFUND',-v_refund,p_payment_method,'出院结算退款',p_operator_id);
     END IF;
     INSERT INTO settlement(settlement_no,admission_id,total_charge,total_deposit,amount_due,refund_amount,settled_by)
       VALUES(CONCAT('S',UUID_SHORT()),p_admission_id,v_charge,v_deposit,0,v_refund,p_operator_id);
     SET p_settlement_id=LAST_INSERT_ID();
-    INSERT INTO settlement_detail(settlement_id,category,amount,item_count)
-      SELECT p_settlement_id,mi.item_type,SUM(c.amount),COUNT(*) FROM charge_detail c JOIN medical_item mi ON mi.id=c.medical_item_id
-      WHERE c.admission_id=p_admission_id GROUP BY mi.item_type;
     UPDATE bed_usage SET end_time=UTC_TIMESTAMP(3),end_reason='DISCHARGE' WHERE admission_id=p_admission_id AND end_time IS NULL;
     UPDATE bed SET status='AVAILABLE',version=version+1 WHERE id=v_bed;
     UPDATE admission SET status='DISCHARGED',discharge_time=UTC_TIMESTAMP(3),current_bed_id=NULL,version=version+1 WHERE id=p_admission_id;
     UPDATE account_alert SET status='RESOLVED',resolved_by=p_operator_id,resolved_at=UTC_TIMESTAMP(3)
       WHERE admission_id=p_admission_id AND status='OPEN';
-END$$
-
--- New charges only: never renumber an immutable historical charge.
--- Uses a sequence table, not a global MySQL setting. Gaps are intentional.
-DROP PROCEDURE IF EXISTS sp_next_charge_number$$
-CREATE PROCEDURE sp_next_charge_number(IN p_reversal BOOLEAN, OUT p_number VARCHAR(32))
-BEGIN
-    DECLARE v_sequence BIGINT;
-    DECLARE v_digits VARCHAR(20);
-    INSERT INTO charge_number_sequence(allocated_at) VALUES(UTC_TIMESTAMP(3));
-    SET v_sequence=LAST_INSERT_ID();
-    SET v_digits=CAST(v_sequence AS CHAR);
-    SET p_number=CONCAT(IF(p_reversal,'CR','C'),
-        DATE_FORMAT(DATE_ADD(UTC_TIMESTAMP(),INTERVAL 8 HOUR),'%Y%m%d'),'-',
-        LPAD(v_digits,GREATEST(8,CHAR_LENGTH(v_digits)),'0'));
 END$$
 
 -- Orders belong to a stay that is currently in hospital.
@@ -254,16 +240,6 @@ BEGIN
 END$$
 DROP TRIGGER IF EXISTS trg_settlement_no_update$$
 CREATE TRIGGER trg_settlement_no_update BEFORE UPDATE ON settlement FOR EACH ROW
-BEGIN
- SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='历史事实禁止覆盖，请使用反向流水';
-END$$
-DROP TRIGGER IF EXISTS trg_settlement_detail_no_delete$$
-CREATE TRIGGER trg_settlement_detail_no_delete BEFORE DELETE ON settlement_detail FOR EACH ROW
-BEGIN
- SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='历史记录禁止物理删除';
-END$$
-DROP TRIGGER IF EXISTS trg_settlement_detail_no_update$$
-CREATE TRIGGER trg_settlement_detail_no_update BEFORE UPDATE ON settlement_detail FOR EACH ROW
 BEGIN
  SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='历史事实禁止覆盖，请使用反向流水';
 END$$

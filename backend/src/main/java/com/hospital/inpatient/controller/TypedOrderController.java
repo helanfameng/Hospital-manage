@@ -8,6 +8,7 @@ import jakarta.validation.constraints.*;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 
 @RestController
@@ -26,7 +27,16 @@ public class TypedOrderController {
     @PostMapping("/order-templates/{id}/disable") @PreAuthorize("hasAuthority('ORDER_WRITE')")
     public ApiResponse<?> disable(@PathVariable long id) { service.disableTemplate(id); return ApiResponse.success("模板已停用",null); }
     @GetMapping("/orders/tasks") @PreAuthorize("hasAnyAuthority('ORDER_EXECUTE','MEDICATION_ADMINISTER','ORDER_WRITE')")
-    public ApiResponse<?> tasks(@RequestParam String phase,@RequestParam(required=false) String itemType) { return ApiResponse.success(service.pending(phase,itemType)); }
+    public ApiResponse<?> tasks(@RequestParam String phase,@RequestParam(required=false) String itemType,
+            @RequestParam(defaultValue="EXECUTABLE") String view,@RequestParam(required=false) Integer windowHours,
+            @RequestParam(required=false) String keyword,@RequestParam(required=false) String administrationMode,
+            @RequestParam(required=false) String timeliness,@RequestParam(required=false) Instant scheduledFrom,
+            @RequestParam(required=false) Instant scheduledTo,@RequestParam(required=false) String dispenseStatus,
+            @RequestParam(required=false) Long departmentId,@RequestParam(defaultValue="PLANNED_AT_ASC") String sort,
+            @RequestParam(defaultValue="1") int page,@RequestParam(defaultValue="20") int size) {
+        return ApiResponse.success(service.tasks(phase,itemType,view,windowHours,keyword,administrationMode,timeliness,
+                scheduledFrom,scheduledTo,dispenseStatus,departmentId,sort,page,size));
+    }
     @PostMapping("/orders/executions") @PreAuthorize("hasAnyAuthority('ORDER_EXECUTE','MEDICATION_ADMINISTER','ORDER_WRITE')")
     public ApiResponse<?> execute(@Valid @RequestBody Requests.OrderExecution body) { return ApiResponse.success(service.execute(body)); }
     @PostMapping("/orders/executions/{id}/reverse") @PreAuthorize("hasAnyAuthority('ORDER_EXECUTE','MEDICATION_ADMINISTER','ORDER_WRITE')")

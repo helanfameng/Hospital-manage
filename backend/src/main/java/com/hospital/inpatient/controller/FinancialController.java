@@ -56,8 +56,10 @@ public class FinancialController {
 
     @PostMapping("/settlements/{admissionId}")
     @PreAuthorize("hasAuthority('SETTLEMENT_MANAGE')")
-    public ApiResponse<?> settle(@PathVariable long admissionId) {
-        return ApiResponse.success("出院结算完成，床位已释放", service.settle(admissionId));
+    public ApiResponse<?> settle(@PathVariable long admissionId,
+                                 @Valid @RequestBody(required = false) Requests.SettlementCreate request) {
+        String paymentMethod = request == null ? "CASH" : request.paymentMethod();
+        return ApiResponse.success("出院结算完成，床位已释放", service.settle(admissionId, paymentMethod));
     }
 
     @GetMapping("/settlements/{admissionId}")

@@ -1,18 +1,18 @@
 SET time_zone = '+00:00';
 
-SELECT 'tables' AS metric, COUNT(*) AS actual, 25 AS expected_min
+SELECT 'tables' AS metric, COUNT(*) AS actual, 28 AS expected_min
 FROM information_schema.tables
 WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'
 UNION ALL
-SELECT 'views', COUNT(*), 6
+SELECT 'views', COUNT(*), 7
 FROM information_schema.views
 WHERE table_schema = DATABASE()
 UNION ALL
-SELECT 'procedures', COUNT(*), 5
+SELECT 'procedures', COUNT(*), 4
 FROM information_schema.routines
 WHERE routine_schema = DATABASE() AND routine_type = 'PROCEDURE'
 UNION ALL
-SELECT 'triggers', COUNT(*), 20
+SELECT 'triggers', COUNT(*), 18
 FROM information_schema.triggers
 WHERE trigger_schema = DATABASE();
 
@@ -34,3 +34,15 @@ FROM bed;
 SELECT * FROM v_available_beds LIMIT 5;
 SELECT * FROM v_current_inpatients LIMIT 5;
 SELECT * FROM v_overdue_accounts LIMIT 5;
+
+-- V7: one balance constraint must exist, and no inventory transaction may violate it.
+SELECT 'inventory_balance_constraint' AS metric, COUNT(*) AS actual, 1 AS expected_min
+FROM information_schema.table_constraints
+WHERE constraint_schema = DATABASE()
+  AND table_name = 'drug_inventory_transaction'
+  AND constraint_name = 'ck_inventory_balance'
+  AND constraint_type = 'CHECK';
+
+SELECT COUNT(*) AS invalid_inventory_balances
+FROM drug_inventory_transaction
+WHERE after_quantity <> before_quantity + quantity;

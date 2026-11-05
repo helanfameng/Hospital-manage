@@ -21,18 +21,19 @@ function edit(row?: Row) {
 }
 async function save() {
   if (busy.value || !form.code.trim() || !form.name.trim() || !form.unit.trim()) return
+  const newDrug = !form.id && form.category === 'DRUG'
   busy.value = true
   try {
     await postData('/order-catalog', { ...form, billable: nonbillable.value ? false : form.billable, price: nonbillable.value || !form.billable ? 0 : form.price, doseUnit: form.category==='DRUG' ? form.doseUnit : null, doseUnitsPerStock: form.category==='DRUG' ? form.doseUnitsPerStock : null, allowedRoutes: form.category==='DRUG' ? routes.value.join(',') : null })
-    ElMessage.success('项目资料已保存，已开医嘱快照不受影响'); editing.value = false; await load()
+    ElMessage.success(newDrug ? '药品资料已保存，初始库存为0，请到“药品库存”办理入库' : '项目资料已保存，已开医嘱快照不受影响'); editing.value = false; await load()
   } finally { busy.value = false }
 }
 onMounted(load)
 </script>
 <template>
-  <el-dialog :model-value="true" title="医嘱项目资料" width="1000px" style="max-width:calc(100vw - 32px)" @close="emit('close')">
+  <el-dialog :model-value="true" title="医嘱项目资料" width="1180px" style="max-width:calc(100vw - 32px)" @close="emit('close')">
     <div class="toolbar"><el-button type="primary" @click="edit()">新增项目</el-button><el-input v-model="keyword" clearable placeholder="编码、名称或规格" style="width:220px"/><el-select v-model="categoryFilter" clearable placeholder="全部类别" style="width:150px"><el-option v-for="(label,key) in orderCategories" :key="key" :label="label" :value="key"/></el-select><span class="muted">药品换算按实物规格维护。</span></div>
-    <el-table :data="visibleItems" max-height="480"><el-table-column prop="item_code" label="编码" min-width="100"/><el-table-column prop="name" label="项目" min-width="170"/><el-table-column prop="specification" label="规格" min-width="140"/><el-table-column label="类别" width="90"><template #default="{row}">{{ orderCategories[row.item_type] }}</template></el-table-column><el-table-column label="计价" min-width="110"><template #default="{row}">{{ row.billable ? '¥'+row.unit_price+'/'+row.unit : '不收费' }}</template></el-table-column><el-table-column label="用量换算" min-width="190"><template #default="{row}">{{ row.item_type==='DRUG' ? (row.dose_unit ? '1 '+row.unit+' = '+row.dose_units_per_stock+' '+row.dose_unit : '待维护，不能开立') : '按项目执行' }}</template></el-table-column><el-table-column prop="allowed_routes" label="途径" min-width="130"/><el-table-column width="80"><template #default="{row}"><el-button link type="primary" @click="edit(row)">维护</el-button></template></el-table-column></el-table>
+    <el-table :data="visibleItems" max-height="480"><el-table-column prop="item_code" label="编码" width="90"/><el-table-column prop="name" label="项目" min-width="145"/><el-table-column prop="specification" label="规格" min-width="115"/><el-table-column label="类别" width="76"><template #default="{row}">{{ orderCategories[row.item_type] }}</template></el-table-column><el-table-column label="计价" min-width="96"><template #default="{row}">{{ row.billable ? '¥'+row.unit_price+'/'+row.unit : '不收费' }}</template></el-table-column><el-table-column label="库存" width="90"><template #default="{row}">{{ row.item_type==='DRUG' ? row.stock_quantity+' '+row.unit : '—' }}</template></el-table-column><el-table-column label="用量换算" min-width="150"><template #default="{row}">{{ row.item_type==='DRUG' ? (row.dose_unit ? '1 '+row.unit+' = '+row.dose_units_per_stock+' '+row.dose_unit : '待维护，不能开立') : '按项目执行' }}</template></el-table-column><el-table-column prop="allowed_routes" label="途径" min-width="112"/><el-table-column width="64" align="right"><template #default="{row}"><el-button link type="primary" @click="edit(row)">维护</el-button></template></el-table-column></el-table>
     <el-dialog v-model="editing" append-to-body title="维护项目资料" width="720px" style="max-width:calc(100vw - 32px)" :close-on-click-modal="false" :show-close="!busy" :close-on-press-escape="!busy">
       <el-form label-position="top" :disabled="busy" class="catalog-form">
         <el-form-item label="项目编码" required><el-input v-model="form.code" maxlength="32"/></el-form-item><el-form-item label="名称" required><el-input v-model="form.name" maxlength="120"/></el-form-item>

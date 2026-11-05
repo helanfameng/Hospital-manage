@@ -1,21 +1,12 @@
 package com.hospital.inpatient.service;
 
-import org.springframework.jdbc.core.ConnectionCallback;
-import org.springframework.jdbc.core.JdbcTemplate;
-import java.sql.Types;
+import java.util.UUID;
 
-/** Shared database sequence for modern charges and modern/legacy charge reversals. */
+/** Application-generated immutable charge identifiers. */
 public final class ChargeNumber {
     private ChargeNumber() {}
 
-    public static String next(JdbcTemplate jdbc, boolean reversal) {
-        return jdbc.execute((ConnectionCallback<String>) connection -> {
-            try (var statement = connection.prepareCall("{CALL sp_next_charge_number(?,?)}")) {
-                statement.setBoolean(1, reversal);
-                statement.registerOutParameter(2, Types.VARCHAR);
-                statement.execute();
-                return statement.getString(2);
-            }
-        });
+    public static String next(boolean reversal) {
+        return (reversal ? "CR" : "C") + UUID.randomUUID().toString().replace("-", "").substring(0, 30);
     }
 }
