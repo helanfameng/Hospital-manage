@@ -7,7 +7,7 @@
 | 分支 | 版本与用途 |
 | --- | --- |
 | [`main`](https://github.com/helanfameng/Hospital-manage-final/tree/main) | 最终采用的住院管理与结算版，Flyway V1–V7 |
-| [`clinical-extension`](https://github.com/helanfameng/Hospital-manage-final/tree/clinical-extension) | 保留的临床扩展版，Flyway V1–V14；从 [Hospital-manage-init](https://github.com/helanfameng/Hospital-manage-init) 导入并保留提交历史 |
+| [`clinical-extension`](https://github.com/helanfameng/Hospital-manage-final/tree/clinical-extension) | 保留的临床扩展版，Flyway V1–V14 |
 
 默认展示 `main`；通过页面的分支菜单切换版本，下载前先选择所需分支。两个分支的数据库迁移链独立，安装与运行请使用所选分支的 README 和部署说明。
 
